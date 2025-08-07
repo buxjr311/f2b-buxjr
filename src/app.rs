@@ -2361,6 +2361,7 @@ impl App {
             Screen::Configuration => self.add_configuration_help(&mut help_lines),
             Screen::Settings => self.add_settings_help(&mut help_lines),
             Screen::JailEditor => self.add_jail_editor_help(&mut help_lines),
+            Screen::Whitelist => self.add_whitelist_help(&mut help_lines),
             _ => self.add_general_help(&mut help_lines),
         }
         
@@ -2375,8 +2376,8 @@ impl App {
             ("H", "Help", "L", "Real-time Logs"),
             ("C", "Configuration", "W", "Whitelist"),
             ("G", "Settings & Performance", "I", "About & Version"),
-            ("F", "Global Refresh", "Q", "Quit Application"),
-            ("", "", "", ""),
+            ("0", "Global Refresh", "Q", "Quit Application"),
+            ("B", "Ban IP Dialog", "", ""),
             ("", "", "", ""),
         ];
         
@@ -2407,29 +2408,51 @@ impl App {
             Span::styled("📊 Dashboard Screen Help:", Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::raw(""));
-        lines.push(Line::raw("The Dashboard provides complete fail2ban management in one place:"));
+        lines.push(Line::raw("The Dashboard provides complete fail2ban management in one place."));
+        lines.push(Line::raw("Use TAB to switch focus between Jails and Banned IPs panels."));
         lines.push(Line::raw(""));
-        lines.push(Line::raw("• Service status with direct control actions"));
-        lines.push(Line::raw("• Active jails with enable/disable and editing"));
-        lines.push(Line::raw("• Banned IPs with ban/unban capabilities"));
-        lines.push(Line::raw("• Real-time system health monitoring"));
-        lines.push(Line::raw(""));
+        
         lines.push(Line::from(vec![
-            Span::styled("Service Actions:", Style::default().fg(Color::Cyan)),
+            Span::styled("🚀 Service Management:", Style::default().fg(Color::Cyan)),
         ]));
-        lines.push(Line::raw("• [R] Restart service  [S] Start service"));
-        lines.push(Line::raw("• [T] Stop service     [D] Reload"));
+        lines.push(Line::raw("• [R] Restart fail2ban service"));
+        lines.push(Line::raw("• [S] Start fail2ban service"));
+        lines.push(Line::raw("• [T] Stop fail2ban service"));
+        lines.push(Line::raw("• [D] Reload configuration"));
         lines.push(Line::raw(""));
+        
         lines.push(Line::from(vec![
-            Span::styled("IP Management:", Style::default().fg(Color::Cyan)),
+            Span::styled("⚖️  Jail Management (when Jails panel focused):", Style::default().fg(Color::Cyan)),
         ]));
+        lines.push(Line::raw("• [↑/↓] Navigate jail list"));
+        lines.push(Line::raw("• [ENTER] Enable/disable selected jail"));
+        lines.push(Line::raw("• [E] Edit jail configuration"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
+            Span::styled("🚫 IP Management (when Banned IPs panel focused):", Style::default().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::raw("• [↑/↓] Navigate banned IP list"));
         lines.push(Line::raw("• [U] Unban selected IP"));
-        lines.push(Line::raw("• [TAB] Switch focus on Dashboard"));
+        lines.push(Line::raw("• [W] Open whitelist dialog"));
+        lines.push(Line::raw("• [X] Export banned IPs to CSV"));
         lines.push(Line::raw(""));
+        
         lines.push(Line::from(vec![
-            Span::styled("Jail Management:", Style::default().fg(Color::Cyan)),
+            Span::styled("🔍 Banned IP Filtering (Banned IPs panel):", Style::default().fg(Color::Cyan)),
         ]));
-        lines.push(Line::raw("• [ENTER] Enable/disable  [E] Edit configuration"));
+        lines.push(Line::raw("• [0] Clear all filters"));
+        lines.push(Line::raw("• [1] Cycle IP address filter"));
+        lines.push(Line::raw("• [2] Cycle jail name filter"));
+        lines.push(Line::raw("• [3] Cycle ban age filter"));
+        lines.push(Line::raw("• [4] Cycle remaining time filter"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
+            Span::styled("⌨️  Navigation:", Style::default().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::raw("• [TAB] Switch focus between panels"));
+        lines.push(Line::raw("• [0] Global refresh (return to Dashboard)"));
     }
     
     
@@ -2546,14 +2569,18 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("📋 Available Actions:", Style::default().fg(Color::Cyan)),
         ]));
-        lines.push(Line::raw("[V] View file contents    [E] Edit configuration"));
-        lines.push(Line::raw("[B] Backup configuration  [R] Restore from backup"));
-        lines.push(Line::raw("[T] Test validity         [A] Apply changes"));
+        lines.push(Line::raw("• [↑/↓] Navigate configuration files"));
+        lines.push(Line::raw("• [ENTER] Open selected file for editing"));
+        lines.push(Line::raw("• [E] Edit selected configuration file"));
+        lines.push(Line::raw("• [B] Backup current configuration"));
+        lines.push(Line::raw("• [R] Restore configuration from backup"));
+        lines.push(Line::raw("• [T] Test configuration validity"));
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
             Span::styled("⚠️  Best Practice:", Style::default().fg(Color::Yellow)),
-            Span::raw(" Always edit .local files, not .conf files"),
         ]));
+        lines.push(Line::raw("Always edit .local files, not .conf files"));
+        lines.push(Line::raw("Local files override system defaults safely"));
     }
     
     fn add_settings_help(&self, lines: &mut Vec<Line>) {
@@ -2598,26 +2625,73 @@ impl App {
         lines.push(Line::raw("• Performance stats updated every 10 seconds"));
     }
     
+    fn add_whitelist_help(&self, lines: &mut Vec<Line>) {
+        lines.push(Line::from(vec![
+            Span::styled("🛡️  IP Whitelist Management Help:", Style::default().fg(Color::Yellow)),
+        ]));
+        lines.push(Line::raw(""));
+        lines.push(Line::raw("Manage IP addresses that should never be banned by fail2ban:"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
+            Span::styled("📋 Whitelist Actions:", Style::default().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::raw("• [↑/↓] Navigate through whitelist entries"));
+        lines.push(Line::raw("• [A] Add new IP address to whitelist"));
+        lines.push(Line::raw("• [D] Delete selected IP from whitelist"));
+        lines.push(Line::raw("• [ENTER] Edit selected whitelist entry"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
+            Span::styled("💡 Whitelist Examples:", Style::default().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::raw("• Single IP: 192.168.1.100"));
+        lines.push(Line::raw("• IP Range: 192.168.1.0/24"));
+        lines.push(Line::raw("• Multiple IPs: Add each separately"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
+            Span::styled("⚠️  Important Notes:", Style::default().fg(Color::Yellow)),
+        ]));
+        lines.push(Line::raw("• Whitelisted IPs are never banned"));
+        lines.push(Line::raw("• Changes take effect immediately"));
+        lines.push(Line::raw("• Use carefully to avoid security risks"));
+        lines.push(Line::raw("• Consider IP ranges for office networks"));
+    }
+    
     fn add_general_help(&self, lines: &mut Vec<Line>) {
         lines.push(Line::from(vec![
             Span::styled("🚀 Getting Started:", Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::raw(""));
-        lines.push(Line::raw("1. Check service status on Dashboard (F to refresh)"));
+        lines.push(Line::raw("1. Check service status on Dashboard (0 to refresh)"));
         lines.push(Line::raw("2. View and manage jails directly on Dashboard"));
         lines.push(Line::raw("3. Monitor real-time activity in Logs (L)"));
         lines.push(Line::raw("4. Manage banned IPs directly from Dashboard"));
         lines.push(Line::raw("5. Configure jails and settings (C)"));
+        lines.push(Line::raw("6. Ban/unban IPs manually with B/U keys"));
         lines.push(Line::raw(""));
         
         lines.push(Line::from(vec![
             Span::styled("💡 Pro Tips:", Style::default().fg(Color::Cyan)),
         ]));
         lines.push(Line::raw("• Run with 'sudo' for full functionality"));
+        lines.push(Line::raw("• Use TAB to switch focus between panels"));
+        lines.push(Line::raw("• Use number keys (1-4) for quick filtering"));
         lines.push(Line::raw("• Use log filters to focus on specific events"));
         lines.push(Line::raw("• Monitor performance in Settings screen (G)"));
         lines.push(Line::raw("• Check banned IPs regularly for false positives"));
-        lines.push(Line::raw("• Use ESC key to quickly return to Dashboard"));
+        lines.push(Line::raw("• Use ESC/HOME keys to quickly return to Dashboard"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
+            Span::styled("🔥 Quick Actions:", Style::default().fg(Color::Red)),
+        ]));
+        lines.push(Line::raw("• B - Ban IP immediately"));
+        lines.push(Line::raw("• U - Unban selected IP"));
+        lines.push(Line::raw("• R/S/T/D - Service control (Restart/Start/sTlop/reloaD)"));
+        lines.push(Line::raw("• 0 - Global refresh"));
+        lines.push(Line::raw("• Ctrl+C - Emergency exit"));
     }
     
     fn render_about(&self, frame: &mut Frame, area: ratatui::layout::Rect) {

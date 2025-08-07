@@ -81,22 +81,52 @@ sudo ./target/release/f2b-buxjr
 
 ## 🎮 Usage
 
-### Basic Navigation
-- **h** - Help screen
-- **c** - Configuration management
-- **l** - Live log monitoring  
-- **w** - Whitelist management
-- **q** - Quit application
-- **Tab** - Switch focus between sections
-- **↑↓** - Navigate lists and tables
-- **Enter** - Select/edit items
-- **Escape** - Cancel operations
+### Universal Navigation
+- **H** - Help screen (contextual help for current screen)
+- **C** - Configuration management
+- **L** - Live log monitoring with advanced filtering
+- **W** - Whitelist management  
+- **G** - Settings & Performance monitoring
+- **I** - About & Version information
+- **Q** - Quit application
+- **0** - Global refresh (return to Dashboard with fresh data)
+- **ESC/HOME** - Return to Dashboard
+- **Ctrl+C** - Emergency exit
 
-### Quick Actions
-- **B** - Ban IP address
-- **R** - Refresh data
-- **Space** - Toggle selections
-- **/** - Search (context-dependent)
+### Dashboard Controls
+- **TAB** - Switch focus between Jails and Banned IPs panels
+- **↑↓** - Navigate within focused panel
+- **ENTER** - Enable/disable jail (Jails panel) or view IP details (IPs panel)
+- **E** - Edit jail configuration (when jail selected)
+- **U** - Unban selected IP (when IP selected)
+
+### Service Management (Dashboard)
+- **R** - Restart fail2ban service
+- **S** - Start fail2ban service  
+- **T** - Stop fail2ban service
+- **D** - Reload fail2ban configuration
+
+### IP Management
+- **B** - Ban IP address (opens dialog)
+- **U** - Unban selected IP (with confirmation)
+- **W** - Open whitelist management
+- **X** - Export banned IPs to CSV
+
+### Advanced Filtering (Dashboard - Banned IPs panel)
+- **0** - Clear all active filters
+- **1** - Cycle IP address digit filter
+- **2** - Cycle jail name filter
+- **3** - Cycle ban age filter  
+- **4** - Cycle remaining time filter
+
+### Log Screen Filtering
+- **0** - Clear all log filters
+- **1** - Cycle log level (ERROR → WARN → NOTICE → INFO → DEBUG → All)
+- **2** - Cycle time range (1h → 6h → 24h → 1week → All)  
+- **3** - Toggle show only ban events
+- **4** - Toggle show only unban events
+- **R** - Refresh logs
+- **C** - Clear log buffer
 
 ### Getting Started
 1. Install f2b-buxjr using one of the methods above
