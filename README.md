@@ -82,7 +82,7 @@ sudo ./target/release/f2b-buxjr
 ## 🎮 Usage
 
 ### Universal Navigation
-- **H** - Help screen (contextual help for current screen)
+- **H** - Help screen (contextual help for current screen, scrollable with ↑↓/PgUp/PgDn)
 - **C** - Configuration management
 - **L** - Live log monitoring with advanced filtering
 - **W** - Whitelist management  

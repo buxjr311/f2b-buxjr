@@ -243,6 +243,7 @@ pub struct AppState {
     pub log_search_query: String,
     pub log_search_active: bool,
     pub log_scroll_offset: usize,
+    pub help_scroll_offset: usize,
     // Progress tracking
     pub current_operation: Option<OperationProgress>,
     // Jail management
@@ -482,6 +483,7 @@ impl Default for AppState {
             log_search_query: String::new(),
             log_search_active: false,
             log_scroll_offset: 0,
+            help_scroll_offset: 0,
             current_operation: None,
             selected_jail_index: 0,
             jail_scroll_offset: 0,
@@ -874,9 +876,36 @@ impl App {
                         }
                     },
                     
+                    // HELP SCREEN SCROLLING (when help screen is active)
+                    KeyCode::Up if self.state.current_screen == Screen::Help => {
+                        if self.state.help_scroll_offset > 0 {
+                            self.state.help_scroll_offset = self.state.help_scroll_offset.saturating_sub(1);
+                        }
+                    },
+                    KeyCode::Down if self.state.current_screen == Screen::Help => {
+                        // Get help content to calculate max scroll
+                        let help_content = self.get_contextual_help();
+                        let content_height = help_content.len();
+                        let max_scroll = content_height.saturating_sub(20); // Approximate available height
+                        self.state.help_scroll_offset = (self.state.help_scroll_offset + 1).min(max_scroll);
+                    },
+                    KeyCode::PageUp if self.state.current_screen == Screen::Help => {
+                        self.state.help_scroll_offset = self.state.help_scroll_offset.saturating_sub(10);
+                    },
+                    KeyCode::PageDown if self.state.current_screen == Screen::Help => {
+                        let help_content = self.get_contextual_help();
+                        let content_height = help_content.len();
+                        let max_scroll = content_height.saturating_sub(20); // Approximate available height
+                        self.state.help_scroll_offset = (self.state.help_scroll_offset + 10).min(max_scroll);
+                    },
+                    KeyCode::Home if self.state.current_screen == Screen::Help => {
+                        self.state.help_scroll_offset = 0;
+                    },
+                    
                     // Single-key navigation (only when not conflicting and not in any editor or ban dialog)
                     KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::CONTROL) && !self.state.jail_editor.is_open && !self.state.config_management.editor_open && !self.state.ip_management.ban_dialog_open => {
                         self.state.current_screen = Screen::Help;
+                        self.state.help_scroll_offset = 0; // Reset scroll when entering help
                     },
                     KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) && !self.state.jail_editor.is_open && !self.state.config_management.editor_open && !self.state.ip_management.ban_dialog_open && self.state.current_screen != Screen::Logs => {
                         self.state.current_screen = Screen::Configuration;
@@ -2339,8 +2368,21 @@ impl App {
     fn render_help(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
         let help_text = self.get_contextual_help();
         
+        // Calculate max scroll based on content length and available space
+        let content_height = help_text.len();
+        let available_height = area.height.saturating_sub(2) as usize; // Subtract border height
+        let max_scroll = content_height.saturating_sub(available_height);
+        
+        // Ensure scroll offset doesn't exceed max
+        let scroll_offset = self.state.help_scroll_offset.min(max_scroll);
+        
         let help = Paragraph::new(help_text)
-            .block(Block::default().title("Help & Quick Reference").borders(Borders::ALL));
+            .block(Block::default()
+                .title(format!("Help & Quick Reference (↑↓ to scroll, Page Up/Down, Home) [{}/{}]", 
+                    scroll_offset + 1, 
+                    content_height.max(1)))
+                .borders(Borders::ALL))
+            .scroll((scroll_offset as u16, 0));
         
         frame.render_widget(help, area);
     }
@@ -2350,6 +2392,11 @@ impl App {
             Line::from(vec![
                 Span::styled("f2b-buxjr", Style::default().fg(Color::Cyan)),
                 Span::raw(" - Professional fail2ban TUI Administration Tool"),
+            ]),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("💡 Navigation Tip: ", Style::default().fg(Color::Yellow)),
+                Span::raw("Use ↑↓ arrows, Page Up/Down, or Home to scroll through this help"),
             ]),
             Line::raw(""),
         ];
