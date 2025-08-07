@@ -1,0 +1,58 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Run daily at 6 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  nightly-build:
+    name: Create Nightly Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Install cargo-deb
+      run: cargo install cargo-deb
+      
+    - name: Build release binary
+      run: cargo build --release --verbose
+      
+    - name: Create .deb package
+      run: cargo deb --no-build --verbose
+      
+    - name: Get version and date
+      id: version
+      run: |
+        VERSION=$(grep '^version = ' Cargo.toml | cut -d'"' -f2)
+        DATE=$(date +%Y%m%d)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "date=$DATE" >> $GITHUB_OUTPUT
+        echo "nightly_name=f2b-buxjr-nightly-$DATE" >> $GITHUB_OUTPUT
+        
+    - name: Rename .deb for nightly
+      run: |
+        DEB_FILE=$(find target/debian -name "*.deb" -type f)
+        NIGHTLY_DEB="target/debian/f2b-buxjr-nightly-${{ steps.version.outputs.date }}_amd64.deb"
+        cp "$DEB_FILE" "$NIGHTLY_DEB"
+        echo "Created nightly build: $NIGHTLY_DEB"
+        
+    - name: Upload nightly build
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.version.outputs.nightly_name }}
+        path: target/debian/f2b-buxjr-nightly-*.deb
+        retention-days: 7  # Keep nightly builds for 1 week
