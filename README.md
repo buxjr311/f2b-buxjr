@@ -8,7 +8,9 @@
 
 f2b-buxjr addresses a critical gap in the fail2ban ecosystem by providing system administrators with an intuitive, real-time interface for managing fail2ban without complex command-line operations or security-risky web interfaces.
 
-![f2b-buxjr Demo](assets/demo.gif)
+![f2b-buxjr Dashboard](assets/f2b-buxjr_screenshot.png)
+
+*f2b-buxjr dashboard showing real-time fail2ban management with 91 total jails, 5 active, and 86 currently banned IPs*
 
 ## 🚀 Features
 
