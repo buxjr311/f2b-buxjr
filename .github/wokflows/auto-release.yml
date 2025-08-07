@@ -1,0 +1,73 @@
+name: Auto Release on Version Change
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'Cargo.toml' ]
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.version.outputs.changed }}
+      new-version: ${{ steps.version.outputs.version }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Check if version changed
+      id: version
+      run: |
+        # Get current version from Cargo.toml
+        CURRENT_VERSION=$(grep '^version = ' Cargo.toml | cut -d'"' -f2)
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Get previous version from last commit
+        git checkout HEAD~1 -- Cargo.toml 2>/dev/null || echo "No previous Cargo.toml found"
+        PREV_VERSION=$(grep '^version = ' Cargo.toml | cut -d'"' -f2 2>/dev/null || echo "0.0.0")
+        echo "Previous version: $PREV_VERSION"
+        
+        # Restore current Cargo.toml
+        git checkout HEAD -- Cargo.toml
+        
+        if [ "$CURRENT_VERSION" != "$PREV_VERSION" ]; then
+          echo "Version changed from $PREV_VERSION to $CURRENT_VERSION"
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        else
+          echo "Version unchanged"
+          echo "changed=false" >> $GITHUB_OUTPUT
+        fi
+
+  create-release:
+    needs: check-version
+    if: needs.check-version.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ needs.check-version.outputs.new-version }}
+        release_name: f2b-buxjr v${{ needs.check-version.outputs.new-version }}
+        body: |
+          ## f2b-buxjr v${{ needs.check-version.outputs.new-version }}
+          
+          Automated release created from version bump in Cargo.toml.
+          
+          ### Download
+          - [f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb](../../releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb) - Debian/Ubuntu package
+          
+          ### Installation
+          ```bash
+          wget https://github.com/buxjr311/f2b-buxjr/releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb
+          sudo dpkg -i f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb
+          ```
+          
+          See [README.md](https://github.com/buxjr311/f2b-buxjr#readme) for full documentation.
+        draft: false
+        prerelease: false
