@@ -1,0 +1,24 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test artifacts
+test_*.txt
+*.tmp
+
+# Keep .deb packages for releases but ignore temp debian build files
+/target/debian/f2b-buxjr/

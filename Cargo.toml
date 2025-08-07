@@ -1,0 +1,92 @@
+[package]
+name = "f2b-buxjr"
+version = "0.1.101"
+edition = "2021"
+build = "build.rs"
+description = "Terminal User Interface (TUI) for fail2ban administration"
+authors = ["buxjr311 <bux@buxjr.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/buxjr311/f2b-buxjr"
+readme = "README.md"
+keywords = ["fail2ban", "tui", "security", "administration", "firewall"]
+categories = ["command-line-utilities", "network-programming"]
+rust-version = "1.70"
+
+[[bin]]
+name = "f2b-buxjr"
+path = "src/main.rs"
+
+[[bin]]
+name = "test_integration"
+path = "src/bin/test_integration.rs"
+
+[[bin]]
+name = "test_service_control"
+path = "src/bin/test_service_control.rs"
+
+[[bin]]
+name = "test_ip_management"
+path = "src/bin/test_ip_management.rs"
+
+[[bin]]
+name = "test_comprehensive"
+path = "src/bin/test_comprehensive.rs"
+
+[[bin]]
+name = "test_log_monitor"
+path = "src/bin/test_log_monitor.rs"
+
+[[bin]]
+name = "startup_benchmark"
+path = "src/bin/startup_benchmark.rs"
+
+[[bin]]
+name = "test_performance_complete"
+path = "src/bin/test_performance_complete.rs"
+
+[dependencies]
+# TUI Framework
+ratatui = "0.26"
+crossterm = "0.27"
+
+# Configuration and Serialization
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+# File System Monitoring
+notify = "6.0"
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Command Line Interface
+clap = { version = "4.0", features = ["derive"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
+# Time and Date
+chrono = { version = "0.4", features = ["serde"] }
+
+# System Integration
+nix = { version = "0.27", features = ["user"] }
+
+[package.metadata.deb]
+maintainer = "buxjr311 <bux@buxjr.com>"
+copyright = "2025, buxjr311 <bux@buxjr.com>"
+license-file = ["LICENSE-MIT", "0"]
+extended-description = """\
+A modern Terminal User Interface (TUI) for fail2ban administration.
+f2b-buxjr provides system administrators with an intuitive, real-time
+interface for managing fail2ban jails, monitoring banned IPs, and 
+controlling the fail2ban service without complex command-line operations.
+"""
+depends = "fail2ban (>= 0.9.0), systemd"
+section = "admin"
+priority = "optional"
+assets = [
+    ["target/release/f2b-buxjr", "usr/bin/", "755"],
+    ["LICENSE-MIT", "usr/share/doc/f2b-buxjr/", "644"],
+]
