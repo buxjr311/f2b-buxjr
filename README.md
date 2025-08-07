@@ -89,7 +89,7 @@ sudo ./target/release/f2b-buxjr
 - **G** - Settings & Performance monitoring
 - **I** - About & Version information
 - **Q** - Quit application
-- **0** - Global refresh (return to Dashboard with fresh data)
+- **F** - Global refresh (return to Dashboard with fresh data)
 - **ESC/HOME** - Return to Dashboard
 - **Ctrl+C** - Emergency exit
 

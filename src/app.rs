@@ -9,6 +9,7 @@ use ratatui::{
     Frame,
 };
 use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 use crate::utils::errors::AppError;
 use crate::services::system_service::SystemService;
@@ -949,7 +950,7 @@ impl App {
                         self.cycle_remaining_time_filter();
                     },
                     
-                    KeyCode::Char('0') if !key.modifiers.contains(KeyModifiers::CONTROL) && !self.state.jail_editor.is_open && !self.state.ip_management.ban_dialog_open => {
+                    KeyCode::Char('f') | KeyCode::Char('F') if !key.modifiers.contains(KeyModifiers::CONTROL) && !self.state.jail_editor.is_open && !self.state.ip_management.ban_dialog_open => {
                         // Global refresh - returns to dashboard with fresh data
                         self.start_operation(OperationType::DataRefresh);
                         self.update_operation_progress(25, Some("Refreshing service status...".to_string()));
@@ -1853,38 +1854,45 @@ impl App {
         };
         
         // Calculate dynamic spacing for header including status message
-        let version_text = format!("F2B-BUXjr v{}", env!("CARGO_PKG_VERSION"));
+        let version_prefix = "F2B-BUXjr v";
+        let version_number = env!("CARGO_PKG_VERSION");
         let service_status = format!("[{}]", self.state.fail2ban_service.symbol());
         let screen_title = format!(" {} ", self.state.current_screen.title());
         let datetime_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
         
-        let mut left_side_width = version_text.len() + 1 + service_status.len() + screen_title.len();
+        // Calculate left side width based on actual spans
+        let mut left_side_width = version_prefix.len() + version_number.len() + 1 + service_status.len() + screen_title.len();
         
         // Add status message length to calculation if present
         if let Some(ref msg) = status_display {
-            left_side_width += 3 + msg.len(); // " | " + message
+            // Use Unicode width for proper visual character counting
+            let pipe_separator = " | ";
+            let total_status_width = pipe_separator.width() + msg.width();
+            log::debug!("Status message: '{}' (visual_width={}), pipe: '{}' (visual_width={}), total status width: {}", 
+                       msg, msg.width(), pipe_separator, pipe_separator.width(), total_status_width);
+            left_side_width += total_status_width;
         }
         
         let datetime_width = datetime_str.len();
-        let total_used = left_side_width + datetime_width;
-        let available_space = area.width as usize;
+        let total_width = area.width as usize;
         
-        let padding_space = if available_space > total_used + 2 { // +2 for minimum padding
-            available_space - total_used
-        } else {
-            2 // minimum 2 spaces between content and datetime
-        };
+        // Debug: log the calculation
+        log::debug!("Header calculation: total_width={}, left_side_width={}, datetime_width={}, padding_space={}", 
+                   total_width, left_side_width, datetime_width, total_width.saturating_sub(left_side_width + datetime_width));
+        
+        // Simple math: Total width - left content - datetime = padding needed
+        let padding_space = total_width.saturating_sub(left_side_width + datetime_width);
 
         let mut header_spans = vec![
-            Span::styled("F2B-BUXjr v", Style::default()),
-            Span::styled(env!("CARGO_PKG_VERSION"), Style::default()),
+            Span::styled(version_prefix, Style::default()),
+            Span::styled(version_number, Style::default()),
             Span::raw(" "),
             Span::styled(
-                format!("[{}]", self.state.fail2ban_service.symbol()),
+                &service_status,
                 Style::default().fg(self.state.fail2ban_service.color())
             ),
             Span::styled(
-                screen_title,
+                &screen_title,
                 Style::default().fg(Color::White)
             ),
         ];
@@ -2423,7 +2431,7 @@ impl App {
             ("H", "Help", "L", "Real-time Logs"),
             ("C", "Configuration", "W", "Whitelist"),
             ("G", "Settings & Performance", "I", "About & Version"),
-            ("0", "Global Refresh", "Q", "Quit Application"),
+            ("F", "Global Refresh", "Q", "Quit Application"),
             ("B", "Ban IP Dialog", "", ""),
             ("", "", "", ""),
         ];
@@ -2431,7 +2439,7 @@ impl App {
         for (key1, desc1, key2, desc2) in nav_sections {
             help_lines.push(Line::from(vec![
                 Span::styled(format!("{:>4}", key1), Style::default().fg(Color::Green)),
-                Span::raw(format!(" {:<18}", desc1)),
+                Span::raw(format!(" {:<25}", desc1)),
                 Span::styled(format!("{:>4}", key2), Style::default().fg(Color::Green)),
                 Span::raw(format!(" {}", desc2)),
             ]));
@@ -2499,7 +2507,7 @@ impl App {
             Span::styled("⌨️  Navigation:", Style::default().fg(Color::Cyan)),
         ]));
         lines.push(Line::raw("• [TAB] Switch focus between panels"));
-        lines.push(Line::raw("• [0] Global refresh (return to Dashboard)"));
+        lines.push(Line::raw("• [F] Global refresh (return to Dashboard)"));
     }
     
     
@@ -2711,7 +2719,7 @@ impl App {
             Span::styled("🚀 Getting Started:", Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::raw(""));
-        lines.push(Line::raw("1. Check service status on Dashboard (0 to refresh)"));
+        lines.push(Line::raw("1. Check service status on Dashboard (F to refresh)"));
         lines.push(Line::raw("2. View and manage jails directly on Dashboard"));
         lines.push(Line::raw("3. Monitor real-time activity in Logs (L)"));
         lines.push(Line::raw("4. Manage banned IPs directly from Dashboard"));
@@ -2737,7 +2745,7 @@ impl App {
         lines.push(Line::raw("• B - Ban IP immediately"));
         lines.push(Line::raw("• U - Unban selected IP"));
         lines.push(Line::raw("• R/S/T/D - Service control (Restart/Start/sTlop/reloaD)"));
-        lines.push(Line::raw("• 0 - Global refresh"));
+        lines.push(Line::raw("• F - Global refresh"));
         lines.push(Line::raw("• Ctrl+C - Emergency exit"));
     }
     
