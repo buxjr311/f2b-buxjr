@@ -50,7 +50,8 @@
       "Bash(./target/release/f2b-buxjr:*)",
       "Bash(RUST_LOG=debug ./target/release/f2b-buxjr)",
       "Bash(rg:*)",
-      "Bash(RUSTFLAGS=\"-D unused-imports -D unused-variables\" cargo check --release)"
+      "Bash(RUSTFLAGS=\"-D unused-imports -D unused-variables\" cargo check --release)",
+      "Bash(git pull:*)"
     ],
     "deny": []
   }
