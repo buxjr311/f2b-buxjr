@@ -42,8 +42,9 @@ f2b-buxjr addresses a critical gap in the fail2ban ecosystem by providing system
 
 ### Debian/Ubuntu Package (Recommended)
 
+**Stable Release:**
 ```bash
-# Download latest .deb package from releases
+# Download latest stable release
 wget https://github.com/buxjr311/f2b-buxjr/releases/latest/download/f2b-buxjr_*_amd64.deb
 
 # Install package
@@ -51,6 +52,18 @@ sudo dpkg -i f2b-buxjr_*_amd64.deb
 
 # Run application
 sudo f2b-buxjr
+```
+
+**Development Build (Latest Features):**
+```bash
+# Download latest development build from GitHub Actions artifacts
+# Visit: https://github.com/buxjr311/f2b-buxjr/actions
+# Click on the latest "Build and Release" workflow run
+# Download the "f2b-buxjr-deb-package" artifact
+
+# Extract and install
+unzip f2b-buxjr-deb-package.zip
+sudo dpkg -i f2b-buxjr_*.deb
 ```
 
 ### From Source
