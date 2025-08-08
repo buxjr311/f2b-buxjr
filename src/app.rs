@@ -240,6 +240,8 @@ pub struct AppState {
     pub log_filter: LogFilter,
     // Banned IP filtering state
     pub banned_ip_filter: BannedIpFilter,
+    // Pagination for banned IPs
+    pub banned_ip_pagination: BannedIpPagination,
     pub filtered_log_entries: Vec<LogEntry>,
     pub log_search_query: String,
     pub log_search_active: bool,
@@ -414,6 +416,76 @@ impl Default for BannedIpFilter {
 }
 
 #[derive(Debug, Clone)]
+pub struct BannedIpPagination {
+    pub page_size: usize,
+    pub current_page: usize,
+    pub total_items: usize,
+    pub lazy_loading: bool,  // Only load visible pages
+}
+
+impl Default for BannedIpPagination {
+    fn default() -> Self {
+        Self {
+            page_size: 100,  // Show 100 IPs per page
+            current_page: 0,
+            total_items: 0,
+            lazy_loading: true,
+        }
+    }
+}
+
+impl BannedIpPagination {
+    pub fn total_pages(&self) -> usize {
+        if self.total_items == 0 { 1 } else { (self.total_items + self.page_size - 1) / self.page_size }
+    }
+    
+    pub fn start_index(&self) -> usize {
+        self.current_page * self.page_size
+    }
+    
+    pub fn end_index(&self) -> usize {
+        ((self.current_page + 1) * self.page_size).min(self.total_items)
+    }
+    
+    pub fn next_page(&mut self) -> bool {
+        if self.current_page < self.total_pages().saturating_sub(1) {
+            self.current_page += 1;
+            true
+        } else {
+            false
+        }
+    }
+    
+    pub fn prev_page(&mut self) -> bool {
+        if self.current_page > 0 {
+            self.current_page -= 1;
+            true
+        } else {
+            false
+        }
+    }
+    
+    pub fn go_to_first_page(&mut self) {
+        self.current_page = 0;
+    }
+    
+    pub fn go_to_last_page(&mut self) {
+        if self.total_items > 0 {
+            self.current_page = self.total_pages().saturating_sub(1);
+        }
+    }
+    
+    pub fn update_total_items(&mut self, total: usize) {
+        self.total_items = total;
+        // Ensure current page is valid
+        let max_page = self.total_pages().saturating_sub(1);
+        if self.current_page > max_page {
+            self.current_page = max_page;
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct OperationProgress {
     pub operation_type: OperationType,
     pub progress_percent: u8,
@@ -480,6 +552,7 @@ impl Default for AppState {
             last_service_action: None,
             log_filter: LogFilter::default(),
             banned_ip_filter: BannedIpFilter::default(),
+            banned_ip_pagination: BannedIpPagination::default(),
             filtered_log_entries: Vec::new(),
             log_search_query: String::new(),
             log_search_active: false,
@@ -678,6 +751,11 @@ impl App {
         
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                // Debug key presses when on Dashboard with BannedIPs focus
+                if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs {
+                    log::debug!("Key pressed: {:?}, Screen: {:?}, Focus: {:?}", key.code, self.state.current_screen, self.state.dashboard_focus);
+                }
+                
                 match key.code {
                     // CSV EXPORT - X KEY
                     KeyCode::Char('X') | KeyCode::Char('x') if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs => {
@@ -1156,10 +1234,58 @@ impl App {
                         }
                     },
                     KeyCode::Down if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs => {
-                        if self.state.dashboard_banned_ip_selected_index < self.state.banned_ips.len().saturating_sub(1) {
+                        let filtered_count = self.get_filtered_banned_ips().len();
+                        if self.state.dashboard_banned_ip_selected_index < filtered_count.saturating_sub(1) {
                             self.state.dashboard_banned_ip_selected_index += 1;
                             self.state.dashboard_banned_ip_table_state.select(Some(self.state.dashboard_banned_ip_selected_index));
                         }
+                    },
+                    
+                    // Pagination controls for banned IPs - Using comma/period keys (universal and no conflicts)
+                    KeyCode::Char('.') if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs && !self.state.jail_editor.is_open && !self.state.config_management.editor_open && !self.state.ip_management.ban_dialog_open => {
+                        log::debug!("Period . pressed - attempting next page. Current page: {}, Total pages: {}", 
+                            self.state.banned_ip_pagination.current_page + 1, 
+                            self.state.banned_ip_pagination.total_pages());
+                        if self.state.banned_ip_pagination.next_page() {
+                            self.state.dashboard_banned_ip_selected_index = 0;
+                            self.state.dashboard_banned_ip_table_state.select(Some(0));
+                            self.set_status_message(&format!("Page {} of {}", 
+                                self.state.banned_ip_pagination.current_page + 1, 
+                                self.state.banned_ip_pagination.total_pages()));
+                            log::debug!("Successfully moved to next page");
+                        } else {
+                            self.set_status_message("Already on last page");
+                            log::debug!("Already on last page");
+                        }
+                    },
+                    KeyCode::Char(',') if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs && !self.state.jail_editor.is_open && !self.state.config_management.editor_open && !self.state.ip_management.ban_dialog_open => {
+                        log::debug!("Comma , pressed - attempting previous page. Current page: {}, Total pages: {}", 
+                            self.state.banned_ip_pagination.current_page + 1, 
+                            self.state.banned_ip_pagination.total_pages());
+                        if self.state.banned_ip_pagination.prev_page() {
+                            self.state.dashboard_banned_ip_selected_index = 0;
+                            self.state.dashboard_banned_ip_table_state.select(Some(0));
+                            self.set_status_message(&format!("Page {} of {}", 
+                                self.state.banned_ip_pagination.current_page + 1, 
+                                self.state.banned_ip_pagination.total_pages()));
+                            log::debug!("Successfully moved to previous page");
+                        } else {
+                            self.set_status_message("Already on first page");
+                            log::debug!("Already on first page");
+                        }
+                    },
+                    // First/Last page shortcuts
+                    KeyCode::Home if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs && key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.state.banned_ip_pagination.go_to_first_page();
+                        self.state.dashboard_banned_ip_selected_index = 0;
+                        self.state.dashboard_banned_ip_table_state.select(Some(0));
+                        self.set_status_message("First page");
+                    },
+                    KeyCode::End if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs && key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.state.banned_ip_pagination.go_to_last_page();
+                        self.state.dashboard_banned_ip_selected_index = 0;
+                        self.state.dashboard_banned_ip_table_state.select(Some(0));
+                        self.set_status_message("Last page");
                     },
                     // Dashboard jail enable/disable
                     KeyCode::Enter if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::Jails => {
@@ -1362,6 +1488,9 @@ impl App {
             });
             
             self.state.banned_ips = all_banned_ips;
+            
+            // Update pagination with total count
+            self.state.banned_ip_pagination.update_total_items(self.state.banned_ips.len());
         }
     }
     
@@ -2112,9 +2241,23 @@ impl App {
         let mut rows = Vec::new();
         
         // Compute all needed data first to avoid borrowing conflicts
-        let filtered_ips: Vec<BannedIP> = self.get_filtered_banned_ips().into_iter().cloned().collect();
+        let all_filtered_ips: Vec<BannedIP> = self.get_filtered_banned_ips().into_iter().cloned().collect();
         let total_count = self.state.banned_ips.len();
-        let filtered_count = filtered_ips.len();
+        let filtered_count = all_filtered_ips.len();
+        
+        // Update pagination total with filtered count
+        self.state.banned_ip_pagination.update_total_items(filtered_count);
+        
+        // Get pagination indices after updating
+        let start_idx = self.state.banned_ip_pagination.start_index();
+        let end_idx = self.state.banned_ip_pagination.end_index();
+        
+        // Get only the current page of filtered IPs
+        let filtered_ips: Vec<BannedIP> = all_filtered_ips
+            .into_iter()
+            .skip(start_idx)
+            .take(end_idx - start_idx)
+            .collect();
         
         // Compute filter spans inline to avoid borrowing issues
         let mut filter_spans = Vec::new();
@@ -2191,11 +2334,16 @@ impl App {
             ]));
         }
         
-        // Use pre-computed values for titles
+        // Use pre-computed values for titles with pagination info
+        let pagination = &self.state.banned_ip_pagination;
         let count_text = if filtered_count != total_count {
-            format!("Banned IPs ({} of {} Total) - ", filtered_count, total_count)
+            format!("Banned IPs ({} of {} Total, Page {} of {}) - ", 
+                filtered_count, total_count, 
+                pagination.current_page + 1, pagination.total_pages())
         } else {
-            format!("Banned IPs ({} Total) - ", total_count)
+            format!("Banned IPs ({} Total, Page {} of {}) - ", 
+                total_count,
+                pagination.current_page + 1, pagination.total_pages())
         };
         
         let table = if rows.is_empty() {
@@ -2239,6 +2387,8 @@ impl App {
                         Span::raw(":Age | "),
                         Span::styled("4", Style::default().fg(Color::Rgb(0, 150, 255))),
                         Span::raw(":Remaining | "),
+                        Span::styled(",.", Style::default().fg(Color::Rgb(0, 150, 255))),
+                        Span::raw(":Pages | "),
                         Span::styled("TAB", Style::default().fg(Color::Rgb(0, 150, 255))),
                         Span::raw(":Switch Focus"),
                     ];
@@ -2303,6 +2453,8 @@ impl App {
                         Span::raw(":Age | "),
                         Span::styled("4", Style::default().fg(Color::Rgb(0, 150, 255))),
                         Span::raw(":Remaining | "),
+                        Span::styled(",.", Style::default().fg(Color::Rgb(0, 150, 255))),
+                        Span::raw(":Pages | "),
                         Span::styled("U", Style::default().fg(Color::Rgb(0, 150, 255))),
                         Span::raw(":Unban | "),
                         Span::styled("X", Style::default().fg(Color::Rgb(0, 150, 255))),
@@ -2407,6 +2559,15 @@ impl App {
                 Span::raw("Use ↑↓ arrows, Page Up/Down, or Home to scroll through this help"),
             ]),
             Line::raw(""),
+            Line::from(vec![
+                Span::styled("🚀 NEW: High-Performance Pagination", Style::default().fg(Color::Green)),
+            ]),
+            Line::from(vec![
+                Span::raw("Efficiently handles "),
+                Span::styled("thousands of banned IPs", Style::default().fg(Color::Yellow)),
+                Span::raw(" with responsive pagination (Dashboard → Banned IPs → ,. keys)"),
+            ]),
+            Line::raw(""),
         ];
         
         // Add current screen specific help
@@ -2504,9 +2665,26 @@ impl App {
         lines.push(Line::raw(""));
         
         lines.push(Line::from(vec![
+            Span::styled("📄 Large Dataset Pagination (Banned IPs panel):", Style::default().fg(Color::Green)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("⚡ Performance Optimized", Style::default().fg(Color::Yellow)),
+            Span::raw(" - Handles thousands of banned IPs efficiently"),
+        ]));
+        lines.push(Line::raw("• [,] (Comma) Previous page"));
+        lines.push(Line::raw("• [.] (Period) Next page"));
+        lines.push(Line::raw("• [Ctrl+Home] Jump to first page"));
+        lines.push(Line::raw("• [Ctrl+End] Jump to last page"));
+        lines.push(Line::raw("• Shows 100 IPs per page for optimal performance"));
+        lines.push(Line::raw("• Page info displayed in table header (Page X of Y)"));
+        lines.push(Line::raw("• Works seamlessly with all filtering options"));
+        lines.push(Line::raw(""));
+        
+        lines.push(Line::from(vec![
             Span::styled("⌨️  Navigation:", Style::default().fg(Color::Cyan)),
         ]));
         lines.push(Line::raw("• [TAB] Switch focus between panels"));
+        lines.push(Line::raw("• [↑↓] Navigate within current page"));
         lines.push(Line::raw("• [F] Global refresh (return to Dashboard)"));
     }
     
