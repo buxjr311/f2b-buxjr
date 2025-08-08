@@ -7,7 +7,7 @@ on:
 
 jobs:
   check-version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     outputs:
       version-changed: ${{ steps.version.outputs.changed }}
       new-version: ${{ steps.version.outputs.version }}
@@ -43,7 +43,7 @@ jobs:
   create-release:
     needs: check-version
     if: needs.check-version.outputs.version-changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v4
     
