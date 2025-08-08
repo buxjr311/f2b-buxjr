@@ -60,12 +60,12 @@ jobs:
           Automated release created from version bump in Cargo.toml.
           
           ### Download
-          - [f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb](../../releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb) - Debian/Ubuntu package
+          - [f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb](../../releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb) - Debian/Ubuntu package
           
           ### Installation
           ```bash
-          wget https://github.com/buxjr311/f2b-buxjr/releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb
-          sudo dpkg -i f2b-buxjr_${{ needs.check-version.outputs.new-version }}_amd64.deb
+          wget https://github.com/buxjr311/f2b-buxjr/releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
+          sudo dpkg -i f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
           ```
           
           See [README.md](https://github.com/buxjr311/f2b-buxjr#readme) for full documentation.
