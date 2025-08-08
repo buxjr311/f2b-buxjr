@@ -58,7 +58,17 @@
       "Bash(git push:*)",
       "Bash(gh auth:*)",
       "Bash(git config:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh release view:*)",
+      "Bash(gh release upload:*)",
+      "Bash(gh run download:*)",
+      "Bash(git stash:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh release list:*)",
+      "Bash(gh release edit:*)",
+      "Bash(gh api:*)"
     ],
     "deny": []
   }
