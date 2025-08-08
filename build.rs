@@ -2,8 +2,10 @@ use std::env;
 use std::fs;
 
 fn main() {
-    // Only increment version in release builds
-    if env::var("PROFILE").unwrap_or_default() == "release" {
+    // Only increment version in local release builds, not CI
+    if env::var("PROFILE").unwrap_or_default() == "release" 
+        && env::var("CI").is_err()  // Skip auto-increment in CI environment
+        && env::var("GITHUB_ACTIONS").is_err() { // Skip auto-increment in GitHub Actions
         increment_version();
     }
 }
