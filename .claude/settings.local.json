@@ -68,7 +68,9 @@
       "Bash(git fetch:*)",
       "Bash(gh release list:*)",
       "Bash(gh release edit:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(objdump:*)",
+      "Bash(rustup target:*)"
     ],
     "deny": []
   }
