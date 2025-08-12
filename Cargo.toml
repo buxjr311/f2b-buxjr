@@ -1,6 +1,6 @@
 [package]
 name = "f2b-buxjr"
-version = "0.1.138"
+version = "0.1.146"
 edition = "2021"
 build = "build.rs"
 description = "Terminal User Interface (TUI) for fail2ban administration"
@@ -20,9 +20,6 @@ path = "src/main.rs"
 name = "test_integration"
 path = "src/bin/test_integration.rs"
 
-[[bin]]
-name = "test_service_control"
-path = "src/bin/test_service_control.rs"
 
 [[bin]]
 name = "test_ip_management"

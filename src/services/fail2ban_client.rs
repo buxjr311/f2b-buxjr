@@ -19,19 +19,6 @@ impl Fail2banClient {
             .unwrap_or(false)
     }
     
-    #[allow(dead_code)] // Service health checking for Epic 4
-    pub fn ping() -> Result<bool> {
-        let output = Command::new("fail2ban-client")
-            .arg("ping")
-            .output()
-            .map_err(|e| AppError::Service(ServiceError::CommunicationError(
-                format!("Failed to ping fail2ban: {}", e)
-            )))?;
-        
-        let response = String::from_utf8_lossy(&output.stdout);
-        Ok(response.trim() == "pong")
-    }
-    
     pub fn get_jails(&self) -> Result<Vec<String>> {
         let output = Command::new("fail2ban-client")
             .args(["status"])

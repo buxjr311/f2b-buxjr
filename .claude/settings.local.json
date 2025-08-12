@@ -70,7 +70,9 @@
       "Bash(gh release edit:*)",
       "Bash(gh api:*)",
       "Bash(objdump:*)",
-      "Bash(rustup target:*)"
+      "Bash(rustup target:*)",
+      "Bash(dpkg-deb:*)",
+      "Bash(RUSTFLAGS=\"-D unused-imports -D unused-variables -D dead_code\" cargo check --release)"
     ],
     "deny": []
   }

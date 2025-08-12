@@ -32,20 +32,6 @@ impl SystemService {
         }
     }
     
-    #[allow(dead_code)] // Service status checking for Epic 4
-    pub fn is_enabled(&self) -> Result<bool> {
-        let output = Command::new("systemctl")
-            .args(["is-enabled", &self.service_name])
-            .output()
-            .map_err(|e| AppError::Service(ServiceError::CommunicationError(
-                format!("Failed to check if service is enabled: {}", e)
-            )))?;
-        
-        let binding = String::from_utf8_lossy(&output.stdout);
-        let status_str = binding.trim();
-        Ok(status_str == "enabled")
-    }
-    
     pub fn start(&self) -> Result<()> {
         let output = Command::new("sudo")
             .args(["systemctl", "start", &self.service_name])

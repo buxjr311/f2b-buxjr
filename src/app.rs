@@ -420,7 +420,6 @@ pub struct BannedIpPagination {
     pub page_size: usize,
     pub current_page: usize,
     pub total_items: usize,
-    pub lazy_loading: bool,  // Only load visible pages
 }
 
 impl Default for BannedIpPagination {
@@ -429,7 +428,6 @@ impl Default for BannedIpPagination {
             page_size: 100,  // Show 100 IPs per page
             current_page: 0,
             total_items: 0,
-            lazy_loading: true,
         }
     }
 }
