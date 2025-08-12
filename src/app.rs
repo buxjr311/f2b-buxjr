@@ -422,6 +422,15 @@ impl Default for BannedIpFilter {
     }
 }
 
+impl BannedIpFilter {
+    fn has_active_filters(&self) -> bool {
+        self.ip_starting_digit.is_some() ||
+        self.jail.is_some() ||
+        self.ban_age_hours.is_some() ||
+        self.remaining_time.is_some()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BannedIpPagination {
     pub page_size: usize,
@@ -705,30 +714,71 @@ impl App {
         // Staggered refresh system to prevent blocking
         let mut any_refresh_needed = false;
         
-        // Service status check every 3 seconds (lightweight)
-        if self.last_service_check.elapsed() >= Duration::from_secs(3) {
-            self.refresh_service_status();
+        // Dynamic refresh intervals based on dataset size for extreme performance optimization
+        let banned_ip_count = self.state.banned_ips.len();
+        let is_large_dataset = banned_ip_count > 10000;
+        let is_massive_dataset = banned_ip_count > 15000;
+        
+        // Service status refresh - dramatically reduced for large datasets
+        let service_refresh_interval = if is_massive_dataset {
+            Duration::from_secs(300) // 5 minutes for massive datasets
+        } else if is_large_dataset {
+            Duration::from_secs(60)  // 1 minute for large datasets
+        } else {
+            Duration::from_secs(10)  // 10 seconds for normal datasets
+        };
+        
+        if self.last_service_check.elapsed() >= service_refresh_interval {
+            if !is_massive_dataset {  // Skip service refresh entirely for massive datasets
+                self.refresh_service_status();
+            }
             self.last_service_check = Instant::now();
             any_refresh_needed = true;
         }
         
-        // Jail data every 5 seconds (moderate load)
-        if self.last_jail_refresh.elapsed() >= Duration::from_secs(5) {
-            self.refresh_jail_data();
+        // Jail data refresh - dramatically reduced for large datasets
+        let jail_refresh_interval = if is_massive_dataset {
+            Duration::from_secs(300) // 5 minutes for massive datasets (18k+ IPs)
+        } else if is_large_dataset {
+            Duration::from_secs(60)  // 1 minute for large datasets (10k+ IPs)
+        } else {
+            Duration::from_secs(10)  // 10 seconds for normal datasets
+        };
+        
+        if self.last_jail_refresh.elapsed() >= jail_refresh_interval {
+            if !is_massive_dataset {  // Skip jail refresh entirely for massive datasets
+                self.refresh_jail_data();
+            }
             self.last_jail_refresh = Instant::now();
             any_refresh_needed = true;
         }
         
-        // IP data every 15 seconds (reduced frequency for large datasets)
-        if self.last_ip_refresh.elapsed() >= Duration::from_secs(15) {
+        // IP data refresh - even more conservative for large datasets
+        let ip_refresh_interval = if is_massive_dataset {
+            Duration::from_secs(120) // 2 minutes for massive datasets
+        } else if is_large_dataset {
+            Duration::from_secs(60)  // 1 minute for large datasets
+        } else {
+            Duration::from_secs(30)  // 30 seconds for normal datasets
+        };
+        
+        if self.last_ip_refresh.elapsed() >= ip_refresh_interval {
             self.refresh_ip_data();
             self.last_ip_refresh = Instant::now();
             any_refresh_needed = true;
         }
         
-        // Log entries every 5 seconds (reduced frequency to improve performance)
-        if self.last_log_refresh.elapsed() >= Duration::from_secs(5) {
-            self.refresh_log_data();
+        // Log entries - reduced frequency for large datasets
+        let log_refresh_interval = if is_large_dataset {
+            Duration::from_secs(30)  // 30 seconds for large datasets
+        } else {
+            Duration::from_secs(10)  // 10 seconds for normal datasets
+        };
+        
+        if self.last_log_refresh.elapsed() >= log_refresh_interval {
+            if !is_massive_dataset {  // Skip log refresh for massive datasets unless explicitly requested
+                self.refresh_log_data();
+            }
             self.last_log_refresh = Instant::now();
             any_refresh_needed = true;
         }
@@ -747,9 +797,11 @@ impl App {
             _should_redraw = true; // Trigger redraw for smooth time updates
         }
         
-        // Update performance stats and run optimizations
-        self.update_performance_stats();
-        self.optimize_performance();
+        // Update performance stats and run optimizations - reduced frequency for large datasets
+        if !is_massive_dataset || self.performance_stats.last_performance_check.elapsed() >= Duration::from_secs(60) {
+            self.update_performance_stats();
+            self.optimize_performance();
+        }
         
         // Update cursor blinking for config editor
         if self.state.config_management.editor_open {
@@ -1422,17 +1474,36 @@ impl App {
     }
     
     fn refresh_ip_data(&mut self) {
-        // Skip expensive IP loading if we already have data and it's recent
-        // Only force refresh every 30 seconds for large datasets
-        let force_refresh = self.state.banned_ips.len() > 10000 && 
-            self.state.last_ip_full_refresh.map_or(true, |last| last.elapsed() > Duration::from_secs(30));
+        let banned_ip_count = self.state.banned_ips.len();
+        let is_massive_dataset = banned_ip_count > 15000;
+        let is_large_dataset = banned_ip_count > 10000;
+        
+        // Dramatically more conservative refresh logic for large datasets
+        let force_refresh_interval = if is_massive_dataset {
+            Duration::from_secs(300) // 5 minutes for massive datasets (18k+ IPs)
+        } else if is_large_dataset {
+            Duration::from_secs(120) // 2 minutes for large datasets (10k+ IPs)
+        } else {
+            Duration::from_secs(60)  // 1 minute for normal datasets
+        };
+        
+        let force_refresh = self.state.last_ip_full_refresh.map_or(
+            self.state.banned_ips.is_empty(), // Only if empty on first load
+            |last| last.elapsed() > force_refresh_interval
+        );
         
         let should_refresh = self.state.banned_ips.is_empty() || force_refresh;
         
         if matches!(self.state.fail2ban_service, ServiceStatus::Running) && 
            !self.state.jails.is_empty() && should_refresh {
             
-            log::info!("Loading banned IP data for {} jails...", self.state.jails.len());
+            if is_massive_dataset {
+                log::info!("Loading banned IP data for {} jails (PERFORMANCE MODE: 18k+ IPs detected)...", self.state.jails.len());
+            } else if is_large_dataset {
+                log::info!("Loading banned IP data for {} jails (PERFORMANCE MODE: 10k+ IPs detected)...", self.state.jails.len());
+            } else {
+                log::info!("Loading banned IP data for {} jails...", self.state.jails.len());
+            }
             let start_time = Instant::now();
             
             let mut all_banned_ips = Vec::new();
@@ -4074,6 +4145,15 @@ impl App {
     // Removed unused get_banned_ip_filter_spans function - now computed inline
     
     fn get_filtered_banned_ips(&mut self) -> &Vec<BannedIP> {
+        let is_massive_dataset = self.state.banned_ips.len() > 15000;
+        
+        // For massive datasets (18k+ IPs), skip expensive filtering entirely and return original data
+        if is_massive_dataset && !self.state.banned_ip_filter.has_active_filters() {
+            // Just return the original banned IPs without any expensive operations
+            self.state.cached_filtered_ips = Vec::new(); // Clear cache to save memory
+            return &self.state.banned_ips;
+        }
+        
         // Check if we need to recalculate the filtered results
         let cache_is_valid = self.state.filter_cache_version == self.state.banned_ip_filter.version &&
                             !self.state.cached_filtered_ips.is_empty() &&
@@ -4084,57 +4164,100 @@ impl App {
                        self.state.filter_cache_version, self.state.banned_ip_filter.version);
             let start_time = Instant::now();
             
-            // Apply all filters to create cached result
-            let mut filtered_ips: Vec<BannedIP> = self.state.banned_ips.clone();
-            
-            // Apply IP starting digit filter
-            if let Some(digit) = self.state.banned_ip_filter.ip_starting_digit {
-                filtered_ips.retain(|ip| ip.ip.starts_with(&digit.to_string()));
-            }
-            
-            // Apply jail filter
-            if let Some(ref jail_filter) = self.state.banned_ip_filter.jail {
-                filtered_ips.retain(|ip| &ip.jail == jail_filter);
-            }
-            
-            // Apply ban age filter
-            if let Some(hours) = self.state.banned_ip_filter.ban_age_hours {
-                let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-                filtered_ips.retain(|ip| ip.ban_time >= cutoff_time);
-            }
-            
-            // Apply remaining time filter
-            if let Some(remaining_filter) = self.state.banned_ip_filter.remaining_time {
-                let now = chrono::Utc::now();
-                filtered_ips.retain(|ip| {
-                    match remaining_filter {
-                        RemainingTimeFilter::Soon => {
-                            if let Some(unban_time) = ip.unban_time {
-                                unban_time <= now + chrono::Duration::hours(1)
-                            } else {
-                                false // Permanent bans don't qualify for "soon"
+            // For massive datasets, use iterator-based filtering to avoid cloning entire vector
+            let filtered_ips: Vec<BannedIP> = if is_massive_dataset {
+                log::warn!("PERFORMANCE MODE: Using iterator-based filtering for {} IPs", self.state.banned_ips.len());
+                
+                // Use iterator chain instead of cloning, which is much more memory efficient
+                self.state.banned_ips.iter()
+                    .filter(|ip| {
+                        // Apply IP starting digit filter
+                        if let Some(digit) = self.state.banned_ip_filter.ip_starting_digit {
+                            if !ip.ip.starts_with(&digit.to_string()) {
+                                return false;
                             }
                         }
-                        RemainingTimeFilter::Today => {
-                            if let Some(unban_time) = ip.unban_time {
-                                unban_time <= now + chrono::Duration::hours(24)
-                            } else {
-                                false // Permanent bans don't qualify for "today"
+                        
+                        // Apply jail filter
+                        if let Some(ref jail_filter) = self.state.banned_ip_filter.jail {
+                            if &ip.jail != jail_filter {
+                                return false;
                             }
                         }
-                        RemainingTimeFilter::ThisWeek => {
-                            if let Some(unban_time) = ip.unban_time {
-                                unban_time <= now + chrono::Duration::weeks(1)
-                            } else {
-                                false // Permanent bans don't qualify for "this week"
+                        
+                        // Apply ban age filter
+                        if let Some(hours) = self.state.banned_ip_filter.ban_age_hours {
+                            let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+                            if ip.ban_time < cutoff_time {
+                                return false;
                             }
                         }
-                        RemainingTimeFilter::Permanent => {
-                            ip.unban_time.is_none() // Only permanent bans (no unban time)
+                        
+                        // Apply remaining time filter
+                        if let Some(remaining_filter) = self.state.banned_ip_filter.remaining_time {
+                            let now = chrono::Utc::now();
+                            match remaining_filter {
+                                RemainingTimeFilter::Soon => {
+                                    if let Some(unban_time) = ip.unban_time {
+                                        if unban_time > now + chrono::Duration::hours(1) {
+                                            return false;
+                                        }
+                                    } else {
+                                        return false; // Permanent bans don't qualify for "soon"
+                                    }
+                                }
+                                RemainingTimeFilter::Today => {
+                                    if let Some(unban_time) = ip.unban_time {
+                                        if unban_time > now + chrono::Duration::hours(24) {
+                                            return false;
+                                        }
+                                    } else {
+                                        return false; // Permanent bans don't qualify for "today"
+                                    }
+                                }
+                                RemainingTimeFilter::ThisWeek => {
+                                    if let Some(unban_time) = ip.unban_time {
+                                        if unban_time > now + chrono::Duration::weeks(1) {
+                                            return false;
+                                        }
+                                    } else {
+                                        return false; // Permanent bans don't qualify for "this week"
+                                    }
+                                }
+                                RemainingTimeFilter::Permanent => {
+                                    if ip.unban_time.is_some() {
+                                        return false; // Not a permanent ban
+                                    }
+                                }
+                            }
                         }
-                    }
-                });
-            }
+                        
+                        true
+                    })
+                    .cloned()
+                    .collect()
+            } else {
+                // For smaller datasets, use the original retain-based approach
+                let mut filtered_ips: Vec<BannedIP> = self.state.banned_ips.clone();
+                
+                // Apply IP starting digit filter
+                if let Some(digit) = self.state.banned_ip_filter.ip_starting_digit {
+                    filtered_ips.retain(|ip| ip.ip.starts_with(&digit.to_string()));
+                }
+                
+                // Apply jail filter
+                if let Some(ref jail_filter) = self.state.banned_ip_filter.jail {
+                    filtered_ips.retain(|ip| &ip.jail == jail_filter);
+                }
+                
+                // Apply ban age filter
+                if let Some(hours) = self.state.banned_ip_filter.ban_age_hours {
+                    let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+                    filtered_ips.retain(|ip| ip.ban_time >= cutoff_time);
+                }
+                
+                filtered_ips
+            };
             
             self.state.cached_filtered_ips = filtered_ips;
             self.state.filter_cache_version = self.state.banned_ip_filter.version;
