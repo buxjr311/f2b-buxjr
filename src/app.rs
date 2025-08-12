@@ -256,6 +256,7 @@ pub struct AppState {
     pub current_operation: Option<OperationProgress>,
     // Loading state for banned IPs
     pub is_loading_banned_ips: bool,
+    pub loading_modal: Option<LoadingModalState>,
     // Jail management
     pub selected_jail_index: usize,
     pub jail_scroll_offset: usize,
@@ -295,6 +296,42 @@ pub struct ConfigFile {
     pub description: String,
     pub exists: bool,
     pub editable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadingModalState {
+    pub title: String,
+    pub message: String,
+    pub progress: Option<u8>,  // 0-100 percentage
+    pub started_at: Instant,
+    pub animated_dots: String, // For animated "..." effect
+}
+
+impl LoadingModalState {
+    pub fn new(title: String, message: String) -> Self {
+        Self {
+            title,
+            message,
+            progress: None,
+            started_at: Instant::now(),
+            animated_dots: "".to_string(),
+        }
+    }
+    
+    pub fn with_progress(mut self, progress: u8) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+    
+    pub fn update_message(&mut self, message: String) {
+        self.message = message;
+    }
+    
+    pub fn update_animated_dots(&mut self) {
+        let elapsed = self.started_at.elapsed().as_millis();
+        let dot_count = ((elapsed / 500) % 4) as usize; // Change every 500ms, cycle through 0-3 dots
+        self.animated_dots = ".".repeat(dot_count);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -579,6 +616,7 @@ impl Default for AppState {
             help_scroll_offset: 0,
             current_operation: None,
             is_loading_banned_ips: false,
+            loading_modal: None,
             selected_jail_index: 0,
             jail_scroll_offset: 0,
             ip_management: IpManagementState::default(),
@@ -809,6 +847,11 @@ impl App {
         if !is_massive_dataset || self.performance_stats.last_performance_check.elapsed() >= Duration::from_secs(60) {
             self.update_performance_stats();
             self.optimize_performance();
+        }
+        
+        // Update loading modal animation if present
+        if let Some(ref mut modal) = self.state.loading_modal {
+            modal.update_animated_dots();
         }
         
         // Update cursor blinking for config editor
@@ -1579,27 +1622,39 @@ impl App {
     }
     
     fn start_banned_ip_loading(&mut self) {
-        // Phase 1: Set loading state and show message - UI will redraw before next event
+        // Phase 1: Show full-screen loading modal - UI will redraw before next event
         self.state.is_loading_banned_ips = true;
         
         let banned_ip_count = self.state.banned_ips.len();
         let is_massive_dataset = banned_ip_count > 15000;
         let is_large_dataset = banned_ip_count > 10000;
         
-        // Show user-visible loading message immediately
-        if is_massive_dataset {
-            self.set_status_message("🔄 Loading banned IPs... (Large dataset detected, this may take 10-15 seconds)");
-            log::info!("PHASE 1: Showing loading message for massive dataset ({}+ IPs)", banned_ip_count);
+        // Show full-screen modal that's impossible to miss
+        let (title, message) = if is_massive_dataset {
+            (
+                "🔄 Loading Banned IPs".to_string(),
+                format!("Large dataset detected ({} existing IPs)\n\nThis operation may take 10-15 seconds\nPlease wait while we load all banned IPs", banned_ip_count)
+            )
         } else if is_large_dataset {
-            self.set_status_message("🔄 Loading banned IPs... (this may take several seconds)");
-            log::info!("PHASE 1: Showing loading message for large dataset ({}+ IPs)", banned_ip_count);
+            (
+                "🔄 Loading Banned IPs".to_string(),
+                format!("Loading {} banned IPs\n\nThis may take several seconds\nPlease wait", banned_ip_count)
+            )
         } else {
-            self.set_status_message("🔄 Loading banned IPs...");
-            log::info!("PHASE 1: Showing loading message for normal dataset");
-        }
+            (
+                "🔄 Loading Banned IPs".to_string(),
+                "Loading banned IPs from all jails\n\nPlease wait".to_string()
+            )
+        };
+        
+        self.state.loading_modal = Some(LoadingModalState::new(title, message));
+        
+        log::info!("PHASE 1: Showing full-screen loading modal for {} dataset ({}+ IPs)", 
+                  if is_massive_dataset { "massive" } else if is_large_dataset { "large" } else { "normal" }, 
+                  banned_ip_count);
         
         // Force immediate UI refresh by returning - actual loading happens in next cycle
-        log::info!("PHASE 1 COMPLETE: Loading message displayed, will load data on next event cycle");
+        log::info!("PHASE 1 COMPLETE: Loading modal displayed, will load data on next event cycle");
     }
     
     fn continue_banned_ip_loading(&mut self) {
@@ -1639,11 +1694,14 @@ impl App {
             let jail_names: Vec<String> = self.state.jails.keys().cloned().collect();
             
             for (index, jail_name) in jail_names.iter().enumerate() {
-                // Update progress for large datasets
+                // Update modal progress for large datasets
                 if is_large_dataset && total_jails > 3 {
                     let progress_percent = ((index + 1) * 100) / total_jails;
-                    self.set_status_message(&format!("🔄 Loading banned IPs... ({}/{} jails, {}%)", 
-                                                     index + 1, total_jails, progress_percent));
+                    if let Some(ref mut modal) = self.state.loading_modal {
+                        modal.update_message(format!("Loading banned IPs from jails ({}/{})\n\nProgress: {}%\n\nCurrently processing: {}", 
+                                                     index + 1, total_jails, progress_percent, jail_name));
+                        modal.progress = Some(progress_percent as u8);
+                    }
                 }
                 
                 match self.fail2ban_client.get_banned_ips(jail_name) {
@@ -1663,9 +1721,12 @@ impl App {
             log::info!("Loaded {} total banned IPs from {} jails in {:.2}s", 
                       total_processed, self.state.jails.len(), load_duration.as_secs_f32());
             
-            // Show sorting progress for large datasets
+            // Show sorting progress in modal for large datasets
             if is_large_dataset {
-                self.set_status_message("🔄 Sorting banned IPs...");
+                if let Some(ref mut modal) = self.state.loading_modal {
+                    modal.update_message(format!("Sorting {} banned IPs...\n\nThis may take a moment", total_processed));
+                    modal.progress = Some(95);
+                }
             }
             
             // Sort banned IPs by IP address first, then by jail name
@@ -1679,18 +1740,22 @@ impl App {
             // Update pagination with total count
             self.state.banned_ip_pagination.update_total_items(self.state.banned_ips.len());
             
-            // Show completion message
-            self.set_status_message(&format!("✅ Loaded {} banned IPs from {} jails in {:.1}s", 
+            // Show completion in modal briefly
+            if let Some(ref mut modal) = self.state.loading_modal {
+                modal.update_message(format!("✅ Successfully loaded {} banned IPs\nfrom {} jails in {:.1}s", 
                                             total_processed, total_jails, load_duration.as_secs_f32()));
+                modal.progress = Some(100);
+            }
         } else if !matches!(self.state.fail2ban_service, ServiceStatus::Running) {
             // Clear data if service is not running
             self.state.banned_ips.clear();
             self.state.banned_ip_pagination.update_total_items(0);
         }
         
-        // Reset loading state
+        // Reset loading state and clear modal
         self.state.is_loading_banned_ips = false;
-        log::info!("PHASE 2 COMPLETE: Banned IP loading finished, resetting loading state");
+        self.state.loading_modal = None;
+        log::info!("PHASE 2 COMPLETE: Banned IP loading finished, clearing modal");
     }
     
     fn refresh_log_data(&mut self) {
@@ -2161,6 +2226,11 @@ impl App {
         }
         if self.state.ip_management.whitelist_dialog_open {
             self.render_whitelist_dialog(frame, frame.size());
+        }
+        
+        // Render loading modal on top of EVERYTHING if present (highest priority)
+        if let Some(ref modal) = self.state.loading_modal {
+            self.render_loading_modal(frame, frame.size(), modal);
         }
     }
     
@@ -5722,6 +5792,87 @@ impl App {
                 .alignment(Alignment::Center)
                 .block(Block::default().borders(Borders::TOP));
             frame.render_widget(instructions, chunks[1]);
+        }
+    }
+    
+    fn render_loading_modal(&self, frame: &mut Frame, area: ratatui::layout::Rect, modal: &LoadingModalState) {
+        // Full-screen modal overlay using the mandatory Clear pattern
+        frame.render_widget(Clear, area);
+        
+        // Create completely solid background to block everything
+        let overlay = " ".repeat((area.width * area.height) as usize);
+        let solid_background = Paragraph::new(overlay)
+            .style(Style::default().bg(Color::Black))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(solid_background, area);
+        
+        // Create a large, centered popup that's impossible to miss
+        let popup_area = centered_rect(70, 50, area);
+        
+        // Main dialog border with bright blue styling to grab attention
+        let dialog_border = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD))
+            .title(format!(" {} {} ", modal.title, modal.animated_dots));
+        frame.render_widget(dialog_border, popup_area);
+        
+        let inner = popup_area.inner(&Margin { horizontal: 3, vertical: 2 });
+        
+        // Create layout for content and progress bar
+        let chunks = if modal.progress.is_some() {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),      // Message content
+                    Constraint::Length(3),   // Progress bar
+                    Constraint::Length(2),   // Elapsed time
+                ])
+                .split(inner)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),      // Message content
+                    Constraint::Length(2),   // Elapsed time
+                ])
+                .split(inner)
+        };
+        
+        // Message content with emphasis styling
+        let message_lines: Vec<Line> = modal.message.lines()
+            .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(Color::White))))
+            .collect();
+        
+        let message_content = Paragraph::new(message_lines)
+            .style(Style::default().fg(Color::White))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(message_content, chunks[0]);
+        
+        // Progress bar if available
+        if let Some(progress) = modal.progress {
+            let progress_bar = ratatui::widgets::Gauge::default()
+                .block(Block::default().borders(Borders::ALL).title("Progress"))
+                .gauge_style(Style::default().fg(Color::Cyan).bg(Color::Black))
+                .percent(progress as u16)
+                .label(format!("{}%", progress));
+            frame.render_widget(progress_bar, chunks[1]);
+            
+            // Elapsed time
+            let elapsed = modal.started_at.elapsed();
+            let elapsed_text = format!("Elapsed: {:.1}s", elapsed.as_secs_f32());
+            let elapsed_widget = Paragraph::new(elapsed_text)
+                .style(Style::default().fg(Color::Gray))
+                .alignment(Alignment::Center);
+            frame.render_widget(elapsed_widget, chunks[2]);
+        } else {
+            // Just elapsed time without progress bar
+            let elapsed = modal.started_at.elapsed();
+            let elapsed_text = format!("Elapsed: {:.1}s", elapsed.as_secs_f32());
+            let elapsed_widget = Paragraph::new(elapsed_text)
+                .style(Style::default().fg(Color::Gray))
+                .alignment(Alignment::Center);
+            frame.render_widget(elapsed_widget, chunks[1]);
         }
     }
     
