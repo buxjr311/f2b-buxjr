@@ -18,6 +18,9 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       
+    - name: Add musl target
+      run: rustup target add x86_64-unknown-linux-musl
+      
     - name: Cache dependencies
       uses: actions/cache@v3
       with:
@@ -25,10 +28,13 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-test-musl-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Run tests
       run: cargo test --verbose
+      
+    - name: Test musl build
+      run: cargo build --target x86_64-unknown-linux-musl --verbose
 
   build:
     name: Build and Package
@@ -42,6 +48,9 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       
+    - name: Add musl target
+      run: rustup target add x86_64-unknown-linux-musl
+      
     - name: Cache dependencies
       uses: actions/cache@v3
       with:
@@ -49,33 +58,45 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-musl-${{ hashFiles('**/Cargo.lock') }}
         
     - name: Install cargo-deb
       run: cargo install cargo-deb
       
-    - name: Build release binary with static linking
+    - name: Build release binary with musl (static linking)
       run: |
-        # Add static linking flags for better compatibility
-        export RUSTFLAGS="-C target-feature=+crt-static"
-        cargo build --release --verbose
+        # Build with musl for universal compatibility (no GLIBC dependencies)
+        cargo build --release --target x86_64-unknown-linux-musl --verbose
       
     - name: Create .deb package
-      run: cargo deb --no-build --verbose
+      run: cargo deb --target x86_64-unknown-linux-musl --no-build --verbose
+      
+    - name: Verify binary compatibility
+      run: |
+        echo "Checking binary compatibility..."
+        BINARY="target/x86_64-unknown-linux-musl/release/f2b-buxjr"
+        if [ -f "$BINARY" ]; then
+          echo "Binary exists: $BINARY"
+          file "$BINARY"
+          ldd "$BINARY" || echo "Statically linked binary (expected)"
+        else
+          echo "❌ Binary not found: $BINARY"
+          exit 1
+        fi
       
     - name: List generated files
       run: |
         echo "Generated .deb package:"
-        find target/debian -name "*.deb" -ls
+        find target/x86_64-unknown-linux-musl/debian -name "*.deb" -ls
         echo "Package contents:"
-        dpkg-deb --contents target/debian/*.deb
+        dpkg-deb --contents target/x86_64-unknown-linux-musl/debian/*.deb
         
     - name: Upload .deb as artifact (for main branch)
       if: github.ref == 'refs/heads/main'
       uses: actions/upload-artifact@v4
       with:
         name: f2b-buxjr-deb-package
-        path: target/debian/*.deb
+        path: target/x86_64-unknown-linux-musl/debian/*.deb
         retention-days: 30
         
     - name: Upload .deb to release (for releases)
@@ -85,7 +106,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: target/debian/f2b-buxjr_${{ github.event.release.tag_name }}_amd64.deb
+        asset_path: target/x86_64-unknown-linux-musl/debian/f2b-buxjr_${{ github.event.release.tag_name }}_amd64.deb
         asset_name: f2b-buxjr_${{ github.event.release.tag_name }}_amd64.deb
         asset_content_type: application/vnd.debian.binary-package
 
@@ -101,13 +122,13 @@ jobs:
           echo "Release v$VERSION exists, uploading .deb file..."
           
           # Find the generated .deb file
-          DEB_FILE=$(find target/debian -name "*.deb" -type f | head -1)
+          DEB_FILE=$(find target/x86_64-unknown-linux-musl/debian -name "*.deb" -type f | head -1)
           if [ -n "$DEB_FILE" ]; then
             echo "Uploading $DEB_FILE to release v$VERSION"
             gh release upload "v$VERSION" "$DEB_FILE" --clobber
             echo "✅ Successfully uploaded .deb to release v$VERSION"
           else
-            echo "❌ No .deb file found in target/debian"
+            echo "❌ No .deb file found in target/x86_64-unknown-linux-musl/debian"
             exit 1
           fi
         else
