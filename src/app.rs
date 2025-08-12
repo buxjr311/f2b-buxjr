@@ -254,6 +254,8 @@ pub struct AppState {
     pub help_scroll_offset: usize,
     // Progress tracking
     pub current_operation: Option<OperationProgress>,
+    // Loading state for banned IPs
+    pub is_loading_banned_ips: bool,
     // Jail management
     pub selected_jail_index: usize,
     pub jail_scroll_offset: usize,
@@ -576,6 +578,7 @@ impl Default for AppState {
             log_scroll_offset: 0,
             help_scroll_offset: 0,
             current_operation: None,
+            is_loading_banned_ips: false,
             selected_jail_index: 0,
             jail_scroll_offset: 0,
             ip_management: IpManagementState::default(),
@@ -763,8 +766,13 @@ impl App {
         };
         
         if self.last_ip_refresh.elapsed() >= ip_refresh_interval {
-            self.refresh_ip_data();
-            self.last_ip_refresh = Instant::now();
+            // Use two-phase loading: first set loading state, then load on next cycle
+            if !self.state.is_loading_banned_ips {
+                self.start_banned_ip_loading();
+            } else {
+                self.continue_banned_ip_loading();
+                self.last_ip_refresh = Instant::now();
+            }
             any_refresh_needed = true;
         }
         
@@ -1276,7 +1284,9 @@ impl App {
                                 // On-demand loading: if banned IPs are empty, trigger immediate load
                                 if self.state.banned_ips.is_empty() && matches!(self.state.fail2ban_service, ServiceStatus::Running) {
                                     log::info!("User switched to banned IPs view - triggering on-demand IP data load");
-                                    self.refresh_ip_data();
+                                    if !self.state.is_loading_banned_ips {
+                                        self.start_banned_ip_loading();
+                                    }
                                 }
                             },
                         }
@@ -1566,6 +1576,121 @@ impl App {
             self.state.banned_ips.clear();
             self.state.banned_ip_pagination.update_total_items(0);
         }
+    }
+    
+    fn start_banned_ip_loading(&mut self) {
+        // Phase 1: Set loading state and show message - UI will redraw before next event
+        self.state.is_loading_banned_ips = true;
+        
+        let banned_ip_count = self.state.banned_ips.len();
+        let is_massive_dataset = banned_ip_count > 15000;
+        let is_large_dataset = banned_ip_count > 10000;
+        
+        // Show user-visible loading message immediately
+        if is_massive_dataset {
+            self.set_status_message("🔄 Loading banned IPs... (Large dataset detected, this may take 10-15 seconds)");
+            log::info!("PHASE 1: Showing loading message for massive dataset ({}+ IPs)", banned_ip_count);
+        } else if is_large_dataset {
+            self.set_status_message("🔄 Loading banned IPs... (this may take several seconds)");
+            log::info!("PHASE 1: Showing loading message for large dataset ({}+ IPs)", banned_ip_count);
+        } else {
+            self.set_status_message("🔄 Loading banned IPs...");
+            log::info!("PHASE 1: Showing loading message for normal dataset");
+        }
+        
+        // Force immediate UI refresh by returning - actual loading happens in next cycle
+        log::info!("PHASE 1 COMPLETE: Loading message displayed, will load data on next event cycle");
+    }
+    
+    fn continue_banned_ip_loading(&mut self) {
+        // Phase 2: Actually perform the expensive loading operation
+        log::info!("PHASE 2: Starting actual banned IP loading operation");
+        
+        let banned_ip_count = self.state.banned_ips.len();
+        let is_massive_dataset = banned_ip_count > 15000;
+        let is_large_dataset = banned_ip_count > 10000;
+        
+        // Use the exact same loading logic as before, but now the loading message is already visible
+        let force_refresh_interval = if is_massive_dataset {
+            Duration::from_secs(300) // 5 minutes for massive datasets (18k+ IPs)
+        } else if is_large_dataset {
+            Duration::from_secs(120) // 2 minutes for large datasets (10k+ IPs)
+        } else {
+            Duration::from_secs(60)  // 1 minute for normal datasets
+        };
+        
+        let force_refresh = self.state.last_ip_full_refresh.map_or(
+            self.state.banned_ips.is_empty(), // Only if empty on first load
+            |last| last.elapsed() > force_refresh_interval
+        );
+        
+        let should_refresh = self.state.banned_ips.is_empty() || force_refresh;
+        
+        if matches!(self.state.fail2ban_service, ServiceStatus::Running) && 
+           !self.state.jails.is_empty() && should_refresh {
+            
+            let start_time = Instant::now();
+            
+            let mut all_banned_ips = Vec::new();
+            let mut total_processed = 0;
+            let total_jails = self.state.jails.len();
+            
+            // Collect jail names to avoid borrowing issues
+            let jail_names: Vec<String> = self.state.jails.keys().cloned().collect();
+            
+            for (index, jail_name) in jail_names.iter().enumerate() {
+                // Update progress for large datasets
+                if is_large_dataset && total_jails > 3 {
+                    let progress_percent = ((index + 1) * 100) / total_jails;
+                    self.set_status_message(&format!("🔄 Loading banned IPs... ({}/{} jails, {}%)", 
+                                                     index + 1, total_jails, progress_percent));
+                }
+                
+                match self.fail2ban_client.get_banned_ips(jail_name) {
+                    Ok(mut ips) => {
+                        total_processed += ips.len();
+                        all_banned_ips.append(&mut ips);
+                        log::debug!("Loaded {} IPs from jail {} ({}/{})", 
+                                   ips.len(), jail_name, index + 1, self.state.jails.len());
+                    },
+                    Err(e) => {
+                        log::warn!("Failed to get banned IPs for jail {}: {}", jail_name, e);
+                    }
+                }
+            }
+            
+            let load_duration = start_time.elapsed();
+            log::info!("Loaded {} total banned IPs from {} jails in {:.2}s", 
+                      total_processed, self.state.jails.len(), load_duration.as_secs_f32());
+            
+            // Show sorting progress for large datasets
+            if is_large_dataset {
+                self.set_status_message("🔄 Sorting banned IPs...");
+            }
+            
+            // Sort banned IPs by IP address first, then by jail name
+            all_banned_ips.sort_by(|a, b| {
+                a.ip.cmp(&b.ip).then_with(|| a.jail.cmp(&b.jail))
+            });
+            
+            self.state.banned_ips = all_banned_ips;
+            self.state.last_ip_full_refresh = Some(Instant::now());
+            
+            // Update pagination with total count
+            self.state.banned_ip_pagination.update_total_items(self.state.banned_ips.len());
+            
+            // Show completion message
+            self.set_status_message(&format!("✅ Loaded {} banned IPs from {} jails in {:.1}s", 
+                                            total_processed, total_jails, load_duration.as_secs_f32()));
+        } else if !matches!(self.state.fail2ban_service, ServiceStatus::Running) {
+            // Clear data if service is not running
+            self.state.banned_ips.clear();
+            self.state.banned_ip_pagination.update_total_items(0);
+        }
+        
+        // Reset loading state
+        self.state.is_loading_banned_ips = false;
+        log::info!("PHASE 2 COMPLETE: Banned IP loading finished, resetting loading state");
     }
     
     fn refresh_log_data(&mut self) {
