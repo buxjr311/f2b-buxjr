@@ -318,11 +318,6 @@ impl LoadingModalState {
         }
     }
     
-    pub fn with_progress(mut self, progress: u8) -> Self {
-        self.progress = Some(progress);
-        self
-    }
-    
     pub fn update_message(&mut self, message: String) {
         self.message = message;
     }
@@ -2570,7 +2565,17 @@ impl App {
             let ban_date = ban_time_local.format("%Y-%m-%d").to_string();
             let ban_time = ban_time_local.format("%H:%M:%S").to_string();
             
-            let unban_info = if let Some(unban_time) = banned_ip.unban_time {
+            // Check for permanent bans: either no unban_time or unban_time equals ban_time
+            let is_permanent_ban = banned_ip.unban_time.is_none() || 
+                banned_ip.unban_time.map_or(false, |unban_time| {
+                    // Consider it permanent if ban and unban times are within 1 second of each other
+                    let time_diff = (unban_time.timestamp() - banned_ip.ban_time.timestamp()).abs();
+                    time_diff <= 1
+                });
+            
+            let unban_info = if is_permanent_ban {
+                "Permanent".to_string()
+            } else if let Some(unban_time) = banned_ip.unban_time {
                 let now = chrono::Utc::now();
                 if unban_time > now {
                     let remaining = unban_time - now;
@@ -2582,13 +2587,15 @@ impl App {
                 "Permanent".to_string()
             };
             
-            let unban_date_time = if let Some(unban_time) = banned_ip.unban_time {
+            let unban_date_time = if is_permanent_ban {
+                "Permanent".to_string()
+            } else if let Some(unban_time) = banned_ip.unban_time {
                 let unban_time_local = unban_time.with_timezone(&chrono::Local);
                 format!("{} {}", 
                     unban_time_local.format("%Y-%m-%d"),
                     unban_time_local.format("%H:%M:%S"))
             } else {
-                "Never".to_string()
+                "Permanent".to_string()
             };
             
             rows.push(Row::new(vec![
@@ -5825,7 +5832,6 @@ impl App {
                 .constraints([
                     Constraint::Min(0),      // Message content
                     Constraint::Length(3),   // Progress bar
-                    Constraint::Length(2),   // Elapsed time
                 ])
                 .split(inner)
         } else {
@@ -5833,7 +5839,6 @@ impl App {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(0),      // Message content
-                    Constraint::Length(2),   // Elapsed time
                 ])
                 .split(inner)
         };
@@ -5857,22 +5862,6 @@ impl App {
                 .percent(progress as u16)
                 .label(format!("{}%", progress));
             frame.render_widget(progress_bar, chunks[1]);
-            
-            // Elapsed time
-            let elapsed = modal.started_at.elapsed();
-            let elapsed_text = format!("Elapsed: {:.1}s", elapsed.as_secs_f32());
-            let elapsed_widget = Paragraph::new(elapsed_text)
-                .style(Style::default().fg(Color::Gray))
-                .alignment(Alignment::Center);
-            frame.render_widget(elapsed_widget, chunks[2]);
-        } else {
-            // Just elapsed time without progress bar
-            let elapsed = modal.started_at.elapsed();
-            let elapsed_text = format!("Elapsed: {:.1}s", elapsed.as_secs_f32());
-            let elapsed_widget = Paragraph::new(elapsed_text)
-                .style(Style::default().fg(Color::Gray))
-                .alignment(Alignment::Center);
-            frame.render_widget(elapsed_widget, chunks[1]);
         }
     }
     
