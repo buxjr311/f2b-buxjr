@@ -40,15 +40,42 @@ jobs:
           echo "changed=false" >> $GITHUB_OUTPUT
         fi
 
-  create-release:
+  build-and-release:
     needs: check-version
     if: needs.check-version.outputs.version-changed == 'true'
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v4
     
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Add musl target
+      run: rustup target add x86_64-unknown-linux-musl
+      
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-auto-release-musl-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Install cargo-deb
+      run: cargo install cargo-deb
+      
+    - name: Build release binary with musl (static linking)
+      run: |
+        # Build with musl for universal compatibility (no GLIBC dependencies)
+        cargo build --release --target x86_64-unknown-linux-musl --verbose
+      
+    - name: Create .deb package
+      run: cargo deb --target x86_64-unknown-linux-musl --no-build --verbose
+    
     - name: Create Release
       uses: actions/create-release@v1
+      id: create_release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
@@ -59,15 +86,33 @@ jobs:
           
           Automated release created from version bump in Cargo.toml.
           
-          ### Download
-          - [f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb](../../releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb) - Debian/Ubuntu package
+          ### 🚀 Features
+          - **High-Performance Pagination**: Efficiently handles thousands of banned IPs
+          - **Universal Compatibility**: Static binary works on any Linux system  
+          - **Zero Dependencies**: No GLIBC version requirements
+          - **Enterprise Ready**: Optimized for large-scale deployments
           
-          ### Installation
+          ### 📦 Installation
           ```bash
           wget https://github.com/buxjr311/f2b-buxjr/releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
           sudo dpkg -i f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
           ```
           
-          See [README.md](https://github.com/buxjr311/f2b-buxjr#readme) for full documentation.
+          ### 🎮 Usage
+          ```bash
+          sudo f2b-buxjr
+          ```
+          
+          See [README.md](https://github.com/buxjr311/f2b-buxjr#readme) for complete documentation.
         draft: false
         prerelease: false
+        
+    - name: Upload .deb package to release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: target/x86_64-unknown-linux-musl/debian/f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
+        asset_name: f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
+        asset_content_type: application/vnd.debian.binary-package
