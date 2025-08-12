@@ -705,8 +705,13 @@ impl App {
         app.refresh_service_status();
         app.refresh_jail_data();
         // Load available jails for configuration management (done once on startup)
-        app.load_available_jails(); 
-        // Skip IP loading on startup - will load when user navigates to IP section
+        app.load_available_jails();
+        
+        // Immediately start loading banned IPs if service is running and jails are available
+        if matches!(app.state.fail2ban_service, ServiceStatus::Running) && !app.state.jails.is_empty() {
+            log::info!("Service is running with {} jails, starting immediate banned IP loading", app.state.jails.len());
+            app.start_banned_ip_loading();
+        }
         
         // Initialize dashboard states since we start on the dashboard
         app.initialize_dashboard_states();
