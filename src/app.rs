@@ -648,17 +648,19 @@ impl App {
             last_ui_update: Instant::now(),
             ui_update_interval: Duration::from_millis(500), // Update UI every 500ms for smooth time displays
             // Staggered refresh intervals to prevent blocking
-            last_service_check: Instant::now(),
-            last_jail_refresh: Instant::now(),
-            last_ip_refresh: Instant::now(),
-            last_log_refresh: Instant::now(),
+            last_service_check: Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or(Instant::now()),
+            last_jail_refresh: Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or(Instant::now()),
+            last_ip_refresh: Instant::now().checked_sub(Duration::from_secs(20)).unwrap_or(Instant::now()),
+            last_log_refresh: Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or(Instant::now()),
             performance_stats: PerformanceStats::default(),
         };
         
-        // Perform lightweight initial load - avoid expensive operations on startup
-        log::info!("Application initialized, loading minimal startup data...");
+        // Perform initial load - service status and jail data needed for interface
+        log::info!("Application initialized, loading initial data...");
         app.refresh_service_status();
-        app.refresh_jail_data(); 
+        app.refresh_jail_data();
+        // Load available jails for configuration management (done once on startup)
+        app.load_available_jails(); 
         // Skip IP loading on startup - will load when user navigates to IP section
         
         // Initialize dashboard states since we start on the dashboard
@@ -1372,7 +1374,7 @@ impl App {
         // Lightweight service status check
         match self.system_service.get_status() {
             Ok(status) => {
-                log::debug!("Service status: {:?}", status);
+                log::info!("Service status check result: {:?}", status);
                 self.state.fail2ban_service = status;
             },
             Err(e) => {
@@ -1384,10 +1386,12 @@ impl App {
     }
     
     fn refresh_jail_data(&mut self) {
+        log::info!("Refreshing jail data - service status: {:?}", self.state.fail2ban_service);
         // Only refresh jail data if service is running
         if matches!(self.state.fail2ban_service, ServiceStatus::Running) {
             match self.fail2ban_client.get_jails() {
                 Ok(jail_names) => {
+                    log::info!("Found {} jails: {:?}", jail_names.len(), jail_names);
                     let mut new_jails = HashMap::new();
                     
                     for jail_name in jail_names {
@@ -1406,6 +1410,7 @@ impl App {
                     }
                     
                     if !new_jails.is_empty() {
+                        log::info!("Successfully loaded {} jails into state", new_jails.len());
                         self.state.jails = new_jails;
                     }
                 },
@@ -1684,10 +1689,8 @@ impl App {
         match message {
             // IP management messages
             AppMessage::OpenBanDialog => {
-                // Always reload jail data to ensure we have current information
-                self.load_jail_data();
-                // Also load available jails to get bantime information
-                self.load_available_jails();
+                // Use existing jail data - no need for expensive reload on dialog open
+                // Jail data is kept current by the staggered refresh system
                 
                 self.state.ip_management.ban_dialog_open = true;
                 self.state.ip_management.ban_ip_input.clear();
@@ -4749,9 +4752,8 @@ impl App {
         match client.set_jail_enabled(&jail_name, new_enabled) {
             Ok(()) => {
                 let action_text = if new_enabled { "enabled" } else { "disabled" };
-                self.update_operation_progress(90, Some("🔄 Refreshing jail list...".to_string()));
-                self.load_available_jails();
                 self.complete_operation(true, Some(format!("✓ Jail '{}' {}", jail_name, action_text)));
+                // Jail list will be refreshed by the automatic refresh system
             },
             Err(e) => {
                 log::error!("Failed to toggle jail {}: {}", jail_name, e);
@@ -4765,8 +4767,6 @@ impl App {
                     let client = Fail2banClient::new();
                     match client.set_jail_enabled(&jail_name, false) {
                         Ok(()) => {
-                            self.update_operation_progress(95, Some("Refreshing jail list...".to_string()));
-                            self.load_available_jails();
                             self.complete_operation(false, Some("⚠ Jail auto-disabled due to errors".to_string()));
                             
                             let clean_error = Self::extract_error_messages(&e.to_string());
@@ -4791,8 +4791,6 @@ impl App {
                 }
                 
                 // Regular error handling for disable operations or failed auto-disable
-                self.update_operation_progress(90, Some("Refreshing jail list...".to_string()));
-                self.load_available_jails();
                 self.complete_operation(false, Some("✗ Jail operation failed".to_string()));
                 log::info!("Reloaded jail list from file even though toggle had error");
                 
