@@ -73,36 +73,42 @@ jobs:
     - name: Create .deb package
       run: cargo deb --target x86_64-unknown-linux-musl --no-build --verbose
     
+    - name: Create Release Notes File
+      run: |
+        VERSION="${{ needs.check-version.outputs.new-version }}"
+        cat > release_notes.md << 'EOF'
+        ## f2b-buxjr v${{ needs.check-version.outputs.new-version }}
+        
+        Automated release created from version bump in Cargo.toml.
+        
+        ### 🚀 Features
+        - **High-Performance Pagination**: Efficiently handles thousands of banned IPs
+        - **Universal Compatibility**: Static binary works on any Linux system  
+        - **Zero Dependencies**: No GLIBC version requirements
+        - **Enterprise Ready**: Optimized for large-scale deployments
+        
+        ### 📦 Installation
+        ```bash
+        wget https://github.com/buxjr311/f2b-buxjr/releases/download/v${{ needs.check-version.outputs.new-version }}/f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
+        sudo dpkg -i f2b-buxjr_${{ needs.check-version.outputs.new-version }}-1_amd64.deb
+        ```
+        
+        ### 🎮 Usage
+        ```bash
+        sudo f2b-buxjr
+        ```
+        
+        See [README.md](https://github.com/buxjr311/f2b-buxjr#readme) for complete documentation.
+        EOF
+    
     - name: Create Release with GitHub CLI
       run: |
-        # Create release and upload .deb file
         VERSION="${{ needs.check-version.outputs.new-version }}"
         DEB_FILE="target/x86_64-unknown-linux-musl/debian/f2b-buxjr_${VERSION}-1_amd64.deb"
         
         echo "Creating release v${VERSION}..."
         gh release create "v${VERSION}" "${DEB_FILE}" \
           --title "f2b-buxjr v${VERSION}" \
-          --notes "## f2b-buxjr v${VERSION}
-
-Automated release created from version bump in Cargo.toml.
-
-### 🚀 Features
-- **High-Performance Pagination**: Efficiently handles thousands of banned IPs
-- **Universal Compatibility**: Static binary works on any Linux system  
-- **Zero Dependencies**: No GLIBC version requirements
-- **Enterprise Ready**: Optimized for large-scale deployments
-
-### 📦 Installation
-\`\`\`bash
-wget https://github.com/buxjr311/f2b-buxjr/releases/download/v${VERSION}/f2b-buxjr_${VERSION}-1_amd64.deb
-sudo dpkg -i f2b-buxjr_${VERSION}-1_amd64.deb
-\`\`\`
-
-### 🎮 Usage
-\`\`\`bash
-sudo f2b-buxjr
-\`\`\`
-
-See [README.md](https://github.com/buxjr311/f2b-buxjr#readme) for complete documentation."
+          --notes-file release_notes.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
