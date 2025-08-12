@@ -1356,8 +1356,14 @@ impl App {
                         }
                     },
                     KeyCode::Down if self.state.current_screen == Screen::Dashboard && self.state.dashboard_focus == DashboardFocus::BannedIPs => {
+                        // Calculate items visible on current page
                         let filtered_count = self.get_filtered_banned_ips().len();
-                        if self.state.dashboard_banned_ip_selected_index < filtered_count.saturating_sub(1) {
+                        let start_idx = self.state.banned_ip_pagination.start_index();
+                        let end_idx = self.state.banned_ip_pagination.end_index();
+                        let page_items_count = (end_idx - start_idx).min(filtered_count);
+                        
+                        // Only allow navigation within current page items
+                        if self.state.dashboard_banned_ip_selected_index < page_items_count.saturating_sub(1) {
                             self.state.dashboard_banned_ip_selected_index += 1;
                             self.state.dashboard_banned_ip_table_state.select(Some(self.state.dashboard_banned_ip_selected_index));
                         }
@@ -1622,12 +1628,35 @@ impl App {
     }
     
     fn start_banned_ip_loading(&mut self) {
-        // Phase 1: Show full-screen loading modal - UI will redraw before next event
-        self.state.is_loading_banned_ips = true;
-        
         let banned_ip_count = self.state.banned_ips.len();
         let is_massive_dataset = banned_ip_count > 15000;
         let is_large_dataset = banned_ip_count > 10000;
+        
+        // Check if refresh is actually needed before showing modal
+        let force_refresh_interval = if is_massive_dataset {
+            Duration::from_secs(300) // 5 minutes for massive datasets (18k+ IPs)
+        } else if is_large_dataset {
+            Duration::from_secs(120) // 2 minutes for large datasets (10k+ IPs)
+        } else {
+            Duration::from_secs(60)  // 1 minute for normal datasets
+        };
+        
+        let force_refresh = self.state.last_ip_full_refresh.map_or(
+            self.state.banned_ips.is_empty(), // Only if empty on first load
+            |last| last.elapsed() > force_refresh_interval
+        );
+        
+        let should_refresh = self.state.banned_ips.is_empty() || force_refresh;
+        
+        // Only show modal if we actually need to refresh
+        if !should_refresh {
+            log::debug!("Skipping banned IP refresh - not needed yet (last refresh: {:?})", 
+                       self.state.last_ip_full_refresh.map(|t| t.elapsed()));
+            return;
+        }
+        
+        // Phase 1: Show full-screen loading modal - UI will redraw before next event
+        self.state.is_loading_banned_ips = true;
         
         // Show full-screen modal that's impossible to miss
         let (title, message) = if is_massive_dataset {
@@ -2609,7 +2638,6 @@ impl App {
                 Cell::from(format!("{} {}", ban_date, ban_time)).style(Style::default().fg(Color::White)),
                 Cell::from(unban_date_time).style(Style::default().fg(Color::White)),
                 Cell::from(unban_info).style(Style::default().fg(Color::White)),
-                Cell::from(banned_ip.reason.clone()).style(Style::default().fg(Color::White)),
             ]));
         }
         
@@ -2633,15 +2661,13 @@ impl App {
                     Cell::from(""),
                     Cell::from(""),
                     Cell::from(""),
-                    Cell::from(""),
                 ])],
                 [
                     Constraint::Length(16),  // IP Address
-                    Constraint::Length(12),  // Jail
+                    Constraint::Length(22),  // Jail (increased from 12 to 22)
                     Constraint::Length(20),  // Ban Date/Time
                     Constraint::Length(20),  // Unban Date/Time
-                    Constraint::Length(16),  // Time Remaining
-                    Constraint::Min(15),     // Reason
+                    Constraint::Min(16),     // Time Remaining (expanded to use space from removed reason)
                 ]
             )
             .header(Row::new(vec![
@@ -2650,7 +2676,6 @@ impl App {
                 Cell::from("Banned At").style(Style::default().fg(Color::Yellow)),
                 Cell::from("Unbans At").style(Style::default().fg(Color::Yellow)),
                 Cell::from("Remaining").style(Style::default().fg(Color::Yellow)),
-                Cell::from("Reason").style(Style::default().fg(Color::Yellow)),
             ]))
             .block(Block::default().borders(Borders::ALL).title(
                 if dashboard_focus == DashboardFocus::BannedIPs {
@@ -2705,11 +2730,10 @@ impl App {
                 rows,
                 [
                     Constraint::Length(16),  // IP Address
-                    Constraint::Length(12),  // Jail
+                    Constraint::Length(22),  // Jail (increased from 12 to 22)
                     Constraint::Length(20),  // Ban Date/Time
                     Constraint::Length(20),  // Unban Date/Time
-                    Constraint::Length(16),  // Time Remaining
-                    Constraint::Min(15),     // Reason
+                    Constraint::Min(16),     // Time Remaining (expanded to use space from removed reason)
                 ]
             )
             .header(Row::new(vec![
@@ -2718,7 +2742,6 @@ impl App {
                 Cell::from("Banned At").style(Style::default().fg(Color::Yellow)),
                 Cell::from("Unbans At").style(Style::default().fg(Color::Yellow)),
                 Cell::from("Remaining").style(Style::default().fg(Color::Yellow)),
-                Cell::from("Reason").style(Style::default().fg(Color::Yellow)),
             ]))
             .block(Block::default().borders(Borders::ALL).title(
                 if dashboard_focus == DashboardFocus::BannedIPs {
