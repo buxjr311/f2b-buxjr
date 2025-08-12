@@ -242,6 +242,11 @@ pub struct AppState {
     pub banned_ip_filter: BannedIpFilter,
     // Pagination for banned IPs
     pub banned_ip_pagination: BannedIpPagination,
+    // Performance optimization - track last full IP refresh
+    pub last_ip_full_refresh: Option<Instant>,
+    // Cached filtered IPs to avoid re-filtering 18k items on every render
+    pub cached_filtered_ips: Vec<BannedIP>,
+    pub filter_cache_version: u64,
     pub filtered_log_entries: Vec<LogEntry>,
     pub log_search_query: String,
     pub log_search_active: bool,
@@ -394,6 +399,7 @@ pub struct BannedIpFilter {
     pub jail: Option<String>,           // Filter by specific jail
     pub ban_age_hours: Option<u32>,     // Filter by ban age (recent vs old)
     pub remaining_time: Option<RemainingTimeFilter>, // Filter by remaining ban time
+    pub version: u64, // Version number to track filter changes for caching
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -411,6 +417,7 @@ impl Default for BannedIpFilter {
             jail: None,
             ban_age_hours: None,
             remaining_time: None,
+            version: 0,
         }
     }
 }
@@ -551,6 +558,9 @@ impl Default for AppState {
             log_filter: LogFilter::default(),
             banned_ip_filter: BannedIpFilter::default(),
             banned_ip_pagination: BannedIpPagination::default(),
+            last_ip_full_refresh: None,
+            cached_filtered_ips: Vec::new(),
+            filter_cache_version: 0,
             filtered_log_entries: Vec::new(),
             log_search_query: String::new(),
             log_search_active: false,
@@ -645,11 +655,11 @@ impl App {
             performance_stats: PerformanceStats::default(),
         };
         
-        // Perform initial data load to show correct state immediately
-        log::debug!("Application initialized, loading initial data...");
-        app.refresh_data();
-        app.load_jail_data();
-        app.load_available_jails();
+        // Perform lightweight initial load - avoid expensive operations on startup
+        log::info!("Application initialized, loading minimal startup data...");
+        app.refresh_service_status();
+        app.refresh_jail_data(); 
+        // Skip IP loading on startup - will load when user navigates to IP section
         
         // Initialize dashboard states since we start on the dashboard
         app.initialize_dashboard_states();
@@ -707,15 +717,15 @@ impl App {
             any_refresh_needed = true;
         }
         
-        // IP data every 4 seconds (staggered from jails)
-        if self.last_ip_refresh.elapsed() >= Duration::from_secs(4) {
+        // IP data every 15 seconds (reduced frequency for large datasets)
+        if self.last_ip_refresh.elapsed() >= Duration::from_secs(15) {
             self.refresh_ip_data();
             self.last_ip_refresh = Instant::now();
             any_refresh_needed = true;
         }
         
-        // Log entries every 2 seconds (most frequent, but should be fast)
-        if self.last_log_refresh.elapsed() >= Duration::from_secs(2) {
+        // Log entries every 5 seconds (reduced frequency to improve performance)
+        if self.last_log_refresh.elapsed() >= Duration::from_secs(5) {
             self.refresh_log_data();
             self.last_log_refresh = Instant::now();
             any_refresh_needed = true;
@@ -1030,7 +1040,8 @@ impl App {
                         // Global refresh - returns to dashboard with fresh data
                         self.start_operation(OperationType::DataRefresh);
                         self.update_operation_progress(25, Some("Refreshing service status...".to_string()));
-                        self.refresh_data();
+                        // Use staggered refresh system instead of full refresh
+                        self.refresh_service_status();
                         self.complete_operation(true, Some("✓ Data refreshed".to_string()));
                         
                         // Record refresh timestamp for service status display
@@ -1207,6 +1218,12 @@ impl App {
                             },
                             DashboardFocus::BannedIPs => {
                                 self.state.dashboard_banned_ip_table_state.select(Some(self.state.dashboard_banned_ip_selected_index));
+                                
+                                // On-demand loading: if banned IPs are empty, trigger immediate load
+                                if self.state.banned_ips.is_empty() && matches!(self.state.fail2ban_service, ServiceStatus::Running) {
+                                    log::info!("User switched to banned IPs view - triggering on-demand IP data load");
+                                    self.refresh_ip_data();
+                                }
                             },
                         }
                     },
@@ -1349,73 +1366,7 @@ impl App {
         Ok(self.should_quit)
     }
     
-    fn refresh_data(&mut self) {
-        self.state.last_update = Instant::now();
-        log::debug!("Refreshing data at {:?}", self.state.last_update);
-        
-        // Check service status
-        match self.system_service.get_status() {
-            Ok(status) => {
-                log::debug!("Service status: {:?}", status);
-                self.state.fail2ban_service = status;
-            },
-            Err(e) => {
-                log::error!("Failed to get service status: {}", e);
-                self.state.fail2ban_service = ServiceStatus::Unknown;
-            }
-        }
-        
-        // If fail2ban is running, get jail information
-        if matches!(self.state.fail2ban_service, ServiceStatus::Running) {
-            match self.fail2ban_client.get_jails() {
-                Ok(jail_names) => {
-                    let mut new_jails = HashMap::new();
-                    
-                    for jail_name in jail_names {
-                        match self.fail2ban_client.get_jail_status(&jail_name) {
-                            Ok(jail_state) => {
-                                new_jails.insert(jail_name.clone(), jail_state);
-                            },
-                            Err(e) => {
-                                log::warn!("Failed to get status for jail {}: {}", jail_name, e);
-                                // Keep mock data if we can't get real data
-                                if let Some(existing) = self.state.jails.get(&jail_name) {
-                                    new_jails.insert(jail_name, existing.clone());
-                                }
-                            }
-                        }
-                    }
-                    
-                    if !new_jails.is_empty() {
-                        self.state.jails = new_jails;
-                    }
-                },
-                Err(e) => {
-                    log::error!("Failed to get jail list: {}", e);
-                }
-            }
-            
-            // Get banned IPs for all jails
-            let mut all_banned_ips = Vec::new();
-            for jail_name in self.state.jails.keys() {
-                match self.fail2ban_client.get_banned_ips(jail_name) {
-                    Ok(mut ips) => {
-                        all_banned_ips.append(&mut ips);
-                    },
-                    Err(e) => {
-                        log::warn!("Failed to get banned IPs for jail {}: {}", jail_name, e);
-                    }
-                }
-            }
-            
-            // Sort banned IPs by IP address first, then by jail name
-            all_banned_ips.sort_by(|a, b| {
-                a.ip.cmp(&b.ip).then_with(|| a.jail.cmp(&b.jail))
-            });
-            
-            self.state.banned_ips = all_banned_ips;
-        }
-    }
+    // Removed legacy refresh_data function - replaced with optimized individual refresh functions
     
     fn refresh_service_status(&mut self) {
         // Lightweight service status check
@@ -1466,13 +1417,29 @@ impl App {
     }
     
     fn refresh_ip_data(&mut self) {
-        // Only refresh IP data if service is running and we have jails
-        if matches!(self.state.fail2ban_service, ServiceStatus::Running) && !self.state.jails.is_empty() {
+        // Skip expensive IP loading if we already have data and it's recent
+        // Only force refresh every 30 seconds for large datasets
+        let force_refresh = self.state.banned_ips.len() > 10000 && 
+            self.state.last_ip_full_refresh.map_or(true, |last| last.elapsed() > Duration::from_secs(30));
+        
+        let should_refresh = self.state.banned_ips.is_empty() || force_refresh;
+        
+        if matches!(self.state.fail2ban_service, ServiceStatus::Running) && 
+           !self.state.jails.is_empty() && should_refresh {
+            
+            log::info!("Loading banned IP data for {} jails...", self.state.jails.len());
+            let start_time = Instant::now();
+            
             let mut all_banned_ips = Vec::new();
-            for jail_name in self.state.jails.keys() {
+            let mut total_processed = 0;
+            
+            for (index, jail_name) in self.state.jails.keys().enumerate() {
                 match self.fail2ban_client.get_banned_ips(jail_name) {
                     Ok(mut ips) => {
+                        total_processed += ips.len();
                         all_banned_ips.append(&mut ips);
+                        log::debug!("Loaded {} IPs from jail {} ({}/{})", 
+                                   ips.len(), jail_name, index + 1, self.state.jails.len());
                     },
                     Err(e) => {
                         log::warn!("Failed to get banned IPs for jail {}: {}", jail_name, e);
@@ -1480,15 +1447,24 @@ impl App {
                 }
             }
             
+            let load_duration = start_time.elapsed();
+            log::info!("Loaded {} total banned IPs from {} jails in {:.2}s", 
+                      total_processed, self.state.jails.len(), load_duration.as_secs_f32());
+            
             // Sort banned IPs by IP address first, then by jail name
             all_banned_ips.sort_by(|a, b| {
                 a.ip.cmp(&b.ip).then_with(|| a.jail.cmp(&b.jail))
             });
             
             self.state.banned_ips = all_banned_ips;
+            self.state.last_ip_full_refresh = Some(Instant::now());
             
             // Update pagination with total count
             self.state.banned_ip_pagination.update_total_items(self.state.banned_ips.len());
+        } else if !matches!(self.state.fail2ban_service, ServiceStatus::Running) {
+            // Clear data if service is not running
+            self.state.banned_ips.clear();
+            self.state.banned_ip_pagination.update_total_items(0);
         }
     }
     
@@ -1559,8 +1535,8 @@ impl App {
                 };
                 self.state.last_service_action = Some((action_name.to_string(), chrono::Local::now()));
                 
-                // Refresh data after successful action
-                self.refresh_data();
+                // Trigger targeted IP refresh after successful ban
+                self.last_ip_refresh = Instant::now().checked_sub(Duration::from_secs(4)).unwrap_or(Instant::now());
             },
             Err(e) => {
                 let error_msg = format!("✗ Service action failed: {}", e);
@@ -1592,8 +1568,8 @@ impl App {
                 let success_msg = format!("✓ Successfully unbanned {} from {}", ip, jail);
                 self.complete_operation(true, Some(success_msg));
                 
-                // Refresh data to update the banned IP list
-                self.refresh_data();
+                // Trigger targeted IP refresh after operation
+                self.last_ip_refresh = Instant::now().checked_sub(Duration::from_secs(4)).unwrap_or(Instant::now());
             },
             Err(e) => {
                 let error_msg = format!("✗ Failed to unban {}: {}", ip, e);
@@ -1619,8 +1595,8 @@ impl App {
                 let success_msg = format!("✓ Successfully banned {} in {} (using jail's configured bantime)", ip, jail);
                 self.complete_operation(true, Some(success_msg));
                 
-                // Refresh data to update the banned IP list
-                self.refresh_data();
+                // Trigger targeted IP refresh after operation
+                self.last_ip_refresh = Instant::now().checked_sub(Duration::from_secs(4)).unwrap_or(Instant::now());
             },
             Err(e) => {
                 let error_msg = format!("✗ Failed to ban {}: {}", ip, e);
@@ -2239,7 +2215,7 @@ impl App {
         let mut rows = Vec::new();
         
         // Compute all needed data first to avoid borrowing conflicts
-        let all_filtered_ips: Vec<BannedIP> = self.get_filtered_banned_ips().into_iter().cloned().collect();
+        let all_filtered_ips = self.get_filtered_banned_ips().clone();
         let total_count = self.state.banned_ips.len();
         let filtered_count = all_filtered_ips.len();
         
@@ -4094,59 +4070,80 @@ impl App {
     
     // Removed unused get_banned_ip_filter_spans function - now computed inline
     
-    fn get_filtered_banned_ips(&self) -> Vec<&BannedIP> {
-        let mut filtered_ips: Vec<&BannedIP> = self.state.banned_ips.iter().collect();
+    fn get_filtered_banned_ips(&mut self) -> &Vec<BannedIP> {
+        // Check if we need to recalculate the filtered results
+        let cache_is_valid = self.state.filter_cache_version == self.state.banned_ip_filter.version &&
+                            !self.state.cached_filtered_ips.is_empty() &&
+                            self.state.cached_filtered_ips.len() <= self.state.banned_ips.len();
         
-        // Apply IP starting digit filter
-        if let Some(digit) = self.state.banned_ip_filter.ip_starting_digit {
-            filtered_ips.retain(|ip| ip.ip.starts_with(&digit.to_string()));
-        }
-        
-        // Apply jail filter
-        if let Some(ref jail_filter) = self.state.banned_ip_filter.jail {
-            filtered_ips.retain(|ip| &ip.jail == jail_filter);
-        }
-        
-        // Apply ban age filter
-        if let Some(hours) = self.state.banned_ip_filter.ban_age_hours {
-            let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-            filtered_ips.retain(|ip| ip.ban_time >= cutoff_time);
-        }
-        
-        // Apply remaining time filter
-        if let Some(remaining_filter) = self.state.banned_ip_filter.remaining_time {
-            let now = chrono::Utc::now();
-            filtered_ips.retain(|ip| {
-                match remaining_filter {
-                    RemainingTimeFilter::Soon => {
-                        if let Some(unban_time) = ip.unban_time {
-                            unban_time <= now + chrono::Duration::hours(1)
-                        } else {
-                            false // Permanent bans don't qualify for "soon"
+        if !cache_is_valid {
+            log::debug!("Rebuilding banned IP filter cache (version: {} -> {})", 
+                       self.state.filter_cache_version, self.state.banned_ip_filter.version);
+            let start_time = Instant::now();
+            
+            // Apply all filters to create cached result
+            let mut filtered_ips: Vec<BannedIP> = self.state.banned_ips.clone();
+            
+            // Apply IP starting digit filter
+            if let Some(digit) = self.state.banned_ip_filter.ip_starting_digit {
+                filtered_ips.retain(|ip| ip.ip.starts_with(&digit.to_string()));
+            }
+            
+            // Apply jail filter
+            if let Some(ref jail_filter) = self.state.banned_ip_filter.jail {
+                filtered_ips.retain(|ip| &ip.jail == jail_filter);
+            }
+            
+            // Apply ban age filter
+            if let Some(hours) = self.state.banned_ip_filter.ban_age_hours {
+                let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+                filtered_ips.retain(|ip| ip.ban_time >= cutoff_time);
+            }
+            
+            // Apply remaining time filter
+            if let Some(remaining_filter) = self.state.banned_ip_filter.remaining_time {
+                let now = chrono::Utc::now();
+                filtered_ips.retain(|ip| {
+                    match remaining_filter {
+                        RemainingTimeFilter::Soon => {
+                            if let Some(unban_time) = ip.unban_time {
+                                unban_time <= now + chrono::Duration::hours(1)
+                            } else {
+                                false // Permanent bans don't qualify for "soon"
+                            }
+                        }
+                        RemainingTimeFilter::Today => {
+                            if let Some(unban_time) = ip.unban_time {
+                                unban_time <= now + chrono::Duration::hours(24)
+                            } else {
+                                false // Permanent bans don't qualify for "today"
+                            }
+                        }
+                        RemainingTimeFilter::ThisWeek => {
+                            if let Some(unban_time) = ip.unban_time {
+                                unban_time <= now + chrono::Duration::weeks(1)
+                            } else {
+                                false // Permanent bans don't qualify for "this week"
+                            }
+                        }
+                        RemainingTimeFilter::Permanent => {
+                            ip.unban_time.is_none() // Only permanent bans (no unban time)
                         }
                     }
-                    RemainingTimeFilter::Today => {
-                        if let Some(unban_time) = ip.unban_time {
-                            unban_time <= now + chrono::Duration::hours(24)
-                        } else {
-                            false // Permanent bans don't qualify for "today"
-                        }
-                    }
-                    RemainingTimeFilter::ThisWeek => {
-                        if let Some(unban_time) = ip.unban_time {
-                            unban_time <= now + chrono::Duration::weeks(1)
-                        } else {
-                            false // Permanent bans don't qualify for "this week"
-                        }
-                    }
-                    RemainingTimeFilter::Permanent => {
-                        ip.unban_time.is_none() // Only permanent bans (no unban time)
-                    }
-                }
-            });
+                });
+            }
+            
+            self.state.cached_filtered_ips = filtered_ips;
+            self.state.filter_cache_version = self.state.banned_ip_filter.version;
+            
+            let filter_duration = start_time.elapsed();
+            if filter_duration.as_millis() > 100 {
+                log::info!("Filtered {} banned IPs to {} results in {:.2}ms", 
+                          self.state.banned_ips.len(), self.state.cached_filtered_ips.len(), filter_duration.as_millis());
+            }
         }
         
-        filtered_ips
+        &self.state.cached_filtered_ips
     }
     
     fn toggle_filter_bans_only(&mut self) {
@@ -4322,6 +4319,7 @@ impl App {
     // Banned IP filtering methods
     fn clear_banned_ip_filters(&mut self) {
         self.state.banned_ip_filter = BannedIpFilter::default();
+        self.state.banned_ip_filter.version += 1;
         self.set_status_message("✓ Banned IP filters cleared");
     }
     
@@ -4338,6 +4336,7 @@ impl App {
             Some('8') => Some('9'),
             _ => None,
         };
+        self.state.banned_ip_filter.version += 1;
         
         let status = match self.state.banned_ip_filter.ip_starting_digit {
             None => "✓ Showing all IP addresses",
@@ -4365,6 +4364,7 @@ impl App {
                 }
             }
         };
+        self.state.banned_ip_filter.version += 1;
         
         let status = match &self.state.banned_ip_filter.jail {
             None => "✓ Showing all jails",
@@ -4380,6 +4380,7 @@ impl App {
             Some(24) => Some(168), // Last week
             _ => None,            // All times
         };
+        self.state.banned_ip_filter.version += 1;
         
         let status = match self.state.banned_ip_filter.ban_age_hours {
             None => "✓ Showing bans from all times",
@@ -4399,6 +4400,7 @@ impl App {
             Some(RemainingTimeFilter::ThisWeek) => Some(RemainingTimeFilter::Permanent), // Permanent only
             Some(RemainingTimeFilter::Permanent) => None, // All times
         };
+        self.state.banned_ip_filter.version += 1;
         
         let status = match self.state.banned_ip_filter.remaining_time {
             None => "✓ Showing all remaining times",
