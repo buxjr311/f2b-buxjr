@@ -1497,19 +1497,34 @@ impl App {
         if matches!(self.state.fail2ban_service, ServiceStatus::Running) && 
            !self.state.jails.is_empty() && should_refresh {
             
+            // Show user-visible loading message
             if is_massive_dataset {
+                self.set_status_message("🔄 Loading banned IPs... (Large dataset detected, this may take 10-15 seconds)");
                 log::info!("Loading banned IP data for {} jails (PERFORMANCE MODE: 18k+ IPs detected)...", self.state.jails.len());
             } else if is_large_dataset {
+                self.set_status_message("🔄 Loading banned IPs... (this may take several seconds)");
                 log::info!("Loading banned IP data for {} jails (PERFORMANCE MODE: 10k+ IPs detected)...", self.state.jails.len());
             } else {
+                self.set_status_message("🔄 Loading banned IPs...");
                 log::info!("Loading banned IP data for {} jails...", self.state.jails.len());
             }
             let start_time = Instant::now();
             
             let mut all_banned_ips = Vec::new();
             let mut total_processed = 0;
+            let total_jails = self.state.jails.len();
             
-            for (index, jail_name) in self.state.jails.keys().enumerate() {
+            // Collect jail names to avoid borrowing issues
+            let jail_names: Vec<String> = self.state.jails.keys().cloned().collect();
+            
+            for (index, jail_name) in jail_names.iter().enumerate() {
+                // Update progress for large datasets
+                if is_large_dataset && total_jails > 3 {
+                    let progress_percent = ((index + 1) * 100) / total_jails;
+                    self.set_status_message(&format!("🔄 Loading banned IPs... ({}/{} jails, {}%)", 
+                                                     index + 1, total_jails, progress_percent));
+                }
+                
                 match self.fail2ban_client.get_banned_ips(jail_name) {
                     Ok(mut ips) => {
                         total_processed += ips.len();
@@ -1527,6 +1542,11 @@ impl App {
             log::info!("Loaded {} total banned IPs from {} jails in {:.2}s", 
                       total_processed, self.state.jails.len(), load_duration.as_secs_f32());
             
+            // Show sorting progress for large datasets
+            if is_large_dataset {
+                self.set_status_message("🔄 Sorting banned IPs...");
+            }
+            
             // Sort banned IPs by IP address first, then by jail name
             all_banned_ips.sort_by(|a, b| {
                 a.ip.cmp(&b.ip).then_with(|| a.jail.cmp(&b.jail))
@@ -1537,6 +1557,10 @@ impl App {
             
             // Update pagination with total count
             self.state.banned_ip_pagination.update_total_items(self.state.banned_ips.len());
+            
+            // Show completion message
+            self.set_status_message(&format!("✅ Loaded {} banned IPs from {} jails in {:.1}s", 
+                                            total_processed, total_jails, load_duration.as_secs_f32()));
         } else if !matches!(self.state.fail2ban_service, ServiceStatus::Running) {
             // Clear data if service is not running
             self.state.banned_ips.clear();
@@ -2385,11 +2409,11 @@ impl App {
         // Use pre-computed values for titles with pagination info
         let pagination = &self.state.banned_ip_pagination;
         let count_text = if filtered_count != total_count {
-            format!("Banned IPs ({} of {} Total, Page {} of {}) - ", 
+            format!("Banned IPs ({} of {}, Pg {} of {}) - ", 
                 filtered_count, total_count, 
                 pagination.current_page + 1, pagination.total_pages())
         } else {
-            format!("Banned IPs ({} Total, Page {} of {}) - ", 
+            format!("Banned IPs ({}, Pg {} of {}) - ", 
                 total_count,
                 pagination.current_page + 1, pagination.total_pages())
         };
@@ -2426,19 +2450,21 @@ impl App {
                     let mut title_spans = vec![
                         Span::raw(count_text.clone()),
                         Span::styled("0", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":Clear | "),
+                        Span::raw(":Clr|"),
                         Span::styled("1", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":IP | "),
+                        Span::raw(":IP|"),
                         Span::styled("2", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":Jail | "),
+                        Span::raw(":Jail|"),
                         Span::styled("3", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":Age | "),
+                        Span::raw(":Age|"),
                         Span::styled("4", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":Remaining | "),
+                        Span::raw(":Rem|"),
                         Span::styled(",.", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":Pages | "),
+                        Span::raw(":Pgs|"),
+                        Span::styled("X", Style::default().fg(Color::Rgb(0, 150, 255))),
+                        Span::raw(":Export|"),
                         Span::styled("TAB", Style::default().fg(Color::Rgb(0, 150, 255))),
-                        Span::raw(":Switch Focus"),
+                        Span::raw(":Focus"),
                     ];
                     
                     // Add active filters if any
